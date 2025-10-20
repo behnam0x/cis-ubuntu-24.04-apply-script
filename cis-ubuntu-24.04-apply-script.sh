@@ -480,236 +480,380 @@ EOF
   run_command "sed -i '/pam_motd.so/d' /etc/pam.d/sshd && echo 'session optional pam_motd.so motd=/etc/motd' >> /etc/pam.d/sshd" "1.6.x Configure PAM to show MOTD"
 fi
 
-# =====================[ SECTION 1.7.1: Ensure GDM is removed ]=====================
-start_section "1.7.1"
+#####################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.7" ]]; then
+  # =====================[ SECTION 1.7: GDM Configuration ]=====================
+  start_section "1.7"
 
-# Remove gdm3 and unused dependencies
-if dpkg -l | grep -qw gdm3; then
-  run_command "apt purge -y gdm3" "1.7.1 Remove gdm3 package"
-  run_command "apt autoremove -y gdm3" "1.7.1 Autoremove gdm3 dependencies"
-else
-  log_message "1.7.1 gdm3 is not installed — no action needed"
-fi
-
-# =====================[ SECTION 1.7.2: Ensure GDM login banner is configured ]=====================
-start_section "1.7.2"
-
-BANNER_TEXT="Authorized uses only. All activity may be monitored and reported"
-GDM_PROFILE="gdm"
-GDM_PROFILE_FILE="/etc/dconf/profile/${GDM_PROFILE}"
-GDM_DB_DIR="/etc/dconf/db/${GDM_PROFILE}.d"
-GDM_KEYFILE="${GDM_DB_DIR}/01-banner-message"
-
-# Check if running in graphical session
-if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-  run_command "gsettings set org.gnome.login-screen banner-message-text '${BANNER_TEXT}'" "1.7.2 Set GDM banner text via gsettings"
-  run_command "gsettings set org.gnome.login-screen banner-message-enable true" "1.7.2 Enable GDM banner via gsettings"
-else
-  log_message "1.7.2 Not in graphical session — applying system-wide dconf configuration"
-
-  # Create GDM profile if missing
-  run_command "mkdir -p /etc/dconf/profile" "1.7.2 Ensure /etc/dconf/profile exists"
-  run_command "echo -e 'user-db:user\nsystem-db:${GDM_PROFILE}\nfile-db:/usr/share/${GDM_PROFILE}/greeter-dconf-defaults' > ${GDM_PROFILE_FILE}" "1.7.2 Create GDM profile file"
-
-  # Create GDM database directory and keyfile
-  run_command "mkdir -p ${GDM_DB_DIR}" "1.7.2 Ensure GDM dconf database directory exists"
-  run_command "echo -e '[org/gnome/login-screen]\nbanner-message-enable=true\nbanner-message-text='\"${BANNER_TEXT}\" > ${GDM_KEYFILE}" "1.7.2 Write GDM banner settings to keyfile"
-
-  # Apply dconf changes
-  run_command "dconf update" "1.7.2 Apply dconf changes"
-fi
-
-# =====================[ SECTION 1.7.3: Ensure GDM disable-user-list option is enabled ]=====================
-start_section "1.7.3"
-
-GDM_PROFILE="gdm"
-GDM_PROFILE_FILE="/etc/dconf/profile/${GDM_PROFILE}"
-GDM_DB_DIR="/etc/dconf/db/${GDM_PROFILE}.d"
-GDM_KEYFILE="${GDM_DB_DIR}/00-login-screen"
-
-# Check if running in graphical session
-if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-  run_command "gsettings set org.gnome.login-screen disable-user-list true" "1.7.3 Set disable-user-list via gsettings"
-else
-  log_message "1.7.3 Not in graphical session — applying system-wide dconf configuration"
-
-  # Create GDM profile if missing
-  run_command "mkdir -p /etc/dconf/profile" "1.7.3 Ensure /etc/dconf/profile exists"
-  run_command "echo -e 'user-db:user\nsystem-db:${GDM_PROFILE}\nfile-db:/usr/share/${GDM_PROFILE}/greeter-dconf-defaults' > ${GDM_PROFILE_FILE}" "1.7.3 Create GDM profile file"
-
-  # Create GDM database directory and keyfile
-  run_command "mkdir -p ${GDM_DB_DIR}" "1.7.3 Ensure GDM dconf database directory exists"
-  run_command "echo -e '[org/gnome/login-screen]\n# Do not show the user list\ndisable-user-list=true' > ${GDM_KEYFILE}" "1.7.3 Write disable-user-list setting to keyfile"
-
-  # Apply dconf changes
-  run_command "dconf update" "1.7.3 Apply dconf changes"
-fi
-
-# =====================[ SECTION 1.7.4: Ensure GDM screen locks when the user is idle ]=====================
-start_section "1.7.4"
-
-# Idle and lock delay values (in seconds)
-IDLE_DELAY="900"
-LOCK_DELAY="5"
-
-DCONF_DB="local"
-DCONF_PROFILE="/etc/dconf/profile/user"
-DCONF_DB_DIR="/etc/dconf/db/${DCONF_DB}.d"
-DCONF_KEYFILE="${DCONF_DB_DIR}/00-screensaver"
-
-# Check if running in graphical session
-if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-  run_command "gsettings set org.gnome.desktop.screensaver lock-delay ${LOCK_DELAY}" "1.7.4 Set lock-delay via gsettings"
-  run_command "gsettings set org.gnome.desktop.session idle-delay ${IDLE_DELAY}" "1.7.4 Set idle-delay via gsettings"
-else
-  log_message "1.7.4 Not in graphical session — applying system-wide dconf configuration"
-
-  # Ensure dconf profile includes the local database
-  run_command "mkdir -p /etc/dconf/profile" "1.7.4 Ensure /etc/dconf/profile exists"
-  if ! grep -q "system-db:${DCONF_DB}" "${DCONF_PROFILE}" 2>/dev/null; then
-    run_command "echo -e 'user-db:user\nsystem-db:${DCONF_DB}' >> ${DCONF_PROFILE}" "1.7.4 Add ${DCONF_DB} to dconf profile"
+  # =====================[ SECTION 1.7.1: Ensure GDM is removed ]=====================
+  start_section "1.7.1"
+  if dpkg -l | grep -qw gdm3; then
+    run_command "apt purge -y gdm3" "1.7.1 Remove gdm3 package"
+    run_command "apt autoremove -y gdm3" "1.7.1 Autoremove gdm3 dependencies"
+  else
+    log_message "1.7.1 gdm3 is not installed — no action needed"
   fi
 
-  # Create dconf database directory and keyfile
-  run_command "mkdir -p ${DCONF_DB_DIR}" "1.7.4 Ensure dconf database directory exists"
-  run_command "cat << EOF > ${DCONF_KEYFILE}
+  # =====================[ Skip 1.7.2–1.7.9 if GDM is not installed ]=====================
+  if dpkg -l | grep -qw gdm3; then
+    # Ensure dconf CLI is installed
+    if ! command -v dconf &>/dev/null; then
+      run_command "apt update && apt install -y dconf-cli" "1.7.x Install dconf-cli"
+    fi
+
+    # =====================[ SECTION 1.7.2: Ensure GDM login banner is configured ]=====================
+    start_section "1.7.2"
+    BANNER_TEXT="Authorized uses only. All activity may be monitored and reported"
+    GDM_PROFILE="gdm"
+    GDM_PROFILE_FILE="/etc/dconf/profile/${GDM_PROFILE}"
+    GDM_DB_DIR="/etc/dconf/db/${GDM_PROFILE}.d"
+    GDM_KEYFILE="${GDM_DB_DIR}/01-banner-message"
+
+    if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+      run_command "gsettings set org.gnome.login-screen banner-message-text '${BANNER_TEXT}'" "1.7.2 Set GDM banner text via gsettings"
+      run_command "gsettings set org.gnome.login-screen banner-message-enable true" "1.7.2 Enable GDM banner via gsettings"
+    else
+      log_message "1.7.2 Not in graphical session — applying system-wide dconf configuration"
+      run_command "mkdir -p /etc/dconf/profile" "1.7.2 Ensure /etc/dconf/profile exists"
+      if [ ! -f "${GDM_PROFILE_FILE}" ]; then
+        run_command "echo -e 'user-db:user\nsystem-db:${GDM_PROFILE}\nfile-db:/usr/share/${GDM_PROFILE}/greeter-dconf-defaults' > ${GDM_PROFILE_FILE}" "1.7.2 Create GDM profile file"
+      fi
+      run_command "mkdir -p ${GDM_DB_DIR}" "1.7.2 Ensure GDM dconf database directory exists"
+      cat <<EOF > "${GDM_KEYFILE}"
+[org/gnome/login-screen]
+banner-message-enable=true
+banner-message-text='${BANNER_TEXT}'
+EOF
+      run_command "dconf update" "1.7.2 Apply dconf changes"
+    fi
+
+    # =====================[ SECTION 1.7.3: Ensure GDM disable-user-list option is enabled ]=====================
+    start_section "1.7.3"
+    GDM_KEYFILE="${GDM_DB_DIR}/00-login-screen"
+
+    if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+      run_command "gsettings set org.gnome.login-screen disable-user-list true" "1.7.3 Set disable-user-list via gsettings"
+    else
+      log_message "1.7.3 Not in graphical session — applying system-wide dconf configuration"
+      run_command "mkdir -p /etc/dconf/profile" "1.7.3 Ensure /etc/dconf/profile exists"
+      if [ ! -f "${GDM_PROFILE_FILE}" ]; then
+        run_command "echo -e 'user-db:user\nsystem-db:${GDM_PROFILE}\nfile-db:/usr/share/${GDM_PROFILE}/greeter-dconf-defaults' > ${GDM_PROFILE_FILE}" "1.7.3 Create GDM profile file"
+      fi
+      run_command "mkdir -p ${GDM_DB_DIR}" "1.7.3 Ensure GDM dconf database directory exists"
+      cat <<EOF > "${GDM_KEYFILE}"
+[org/gnome/login-screen]
+# Do not show the user list
+disable-user-list=true
+EOF
+      run_command "dconf update" "1.7.3 Apply dconf changes"
+    fi
+
+    # =====================[ SECTION 1.7.4: Ensure GDM screen locks when the user is idle ]=====================
+    start_section "1.7.4"
+    IDLE_DELAY="900"
+    LOCK_DELAY="5"
+    DCONF_DB="local"
+    DCONF_PROFILE="/etc/dconf/profile/user"
+    DCONF_DB_DIR="/etc/dconf/db/${DCONF_DB}.d"
+    DCONF_KEYFILE="${DCONF_DB_DIR}/00-screensaver"
+
+    if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+      run_command "gsettings set org.gnome.desktop.screensaver lock-delay ${LOCK_DELAY}" "1.7.4 Set lock-delay via gsettings"
+      run_command "gsettings set org.gnome.desktop.session idle-delay ${IDLE_DELAY}" "1.7.4 Set idle-delay via gsettings"
+    else
+      log_message "1.7.4 Not in graphical session — applying system-wide dconf configuration"
+      run_command "mkdir -p /etc/dconf/profile" "1.7.4 Ensure /etc/dconf/profile exists"
+      if ! grep -q "system-db:${DCONF_DB}" "${DCONF_PROFILE}" 2>/dev/null; then
+        run_command "echo -e 'user-db:user\nsystem-db:${DCONF_DB}' >> ${DCONF_PROFILE}" "1.7.4 Add ${DCONF_DB} to dconf profile"
+      fi
+      run_command "mkdir -p ${DCONF_DB_DIR}" "1.7.4 Ensure dconf database directory exists"
+      cat <<EOF > "${DCONF_KEYFILE}"
 [org/gnome/desktop/session]
 idle-delay=uint32 ${IDLE_DELAY}
 [org/gnome/desktop/screensaver]
 lock-delay=uint32 ${LOCK_DELAY}
-EOF" "1.7.4 Write screensaver lock settings"
+EOF
+      run_command "dconf update" "1.7.4 Apply dconf changes"
+    fi
 
-  # Apply dconf changes
-  run_command "dconf update" "1.7.4 Apply dconf changes"
-fi
+    # =====================[ SECTION 1.7.5: Ensure GDM screen locks cannot be overridden ]=====================
+    start_section "1.7.5"
 
-# =====================[ SECTION 1.7.5: Ensure GDM screen locks cannot be overridden ]=====================
-start_section "1.7.5"
+    DCONF_DB="local"
+    LOCK_DIR="/etc/dconf/db/${DCONF_DB}.d/locks"
+    LOCK_FILE="${LOCK_DIR}/00-screensaver"
 
-DCONF_DB="local"
-LOCK_DIR="/etc/dconf/db/${DCONF_DB}.d/locks"
-LOCK_FILE="${LOCK_DIR}/00-screensaver"
+    run_command "mkdir -p ${LOCK_DIR}" "1.7.5 Ensure dconf lock directory exists"
+    run_command "echo '/org/gnome/desktop/session/idle-delay' > ${LOCK_FILE}" "1.7.5 Lock idle-delay setting"
+    run_command "echo '/org/gnome/desktop/screensaver/lock-delay' >> ${LOCK_FILE}" "1.7.5 Lock lock-delay setting"
+    run_command "dconf update" "1.7.5 Apply dconf changes"
 
-# Ensure lock directory exists
-run_command "mkdir -p ${LOCK_DIR}" "1.7.5 Ensure dconf lock directory exists"
+    # =====================[ SECTION 1.7.6: Disable GDM automatic mounting of removable media ]=====================
+    start_section "1.7.6"
 
-# Write lock entries
-run_command "echo '/org/gnome/desktop/session/idle-delay' > ${LOCK_FILE}" "1.7.5 Lock idle-delay setting"
-run_command "echo '/org/gnome/desktop/screensaver/lock-delay' >> ${LOCK_FILE}" "1.7.5 Lock lock-delay setting"
+    DCONF_KEYFILE="/etc/dconf/db/${DCONF_DB}.d/00-media-automount"
 
-# Apply dconf changes
-run_command "dconf update" "1.7.5 Apply dconf changes"
+    if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+      run_command "gsettings set org.gnome.desktop.media-handling automount false" "1.7.6 Disable automount via gsettings"
+      run_command "gsettings set org.gnome.desktop.media-handling automount-open false" "1.7.6 Disable automount-open via gsettings"
+    else
+      log_message "1.7.6 Not in graphical session — applying system-wide dconf configuration"
+      run_command "mkdir -p /etc/dconf/profile" "1.7.6 Ensure /etc/dconf/profile exists"
+      if ! grep -q "system-db:${DCONF_DB}" "${DCONF_PROFILE}" 2>/dev/null; then
+        run_command "echo -e '\nuser-db:user\nsystem-db:${DCONF_DB}' >> ${DCONF_PROFILE}" "1.7.6 Add ${DCONF_DB} to dconf profile"
+      fi
+      run_command "mkdir -p ${DCONF_DB_DIR}" "1.7.6 Ensure dconf database directory exists"
+      cat <<EOF > "${DCONF_KEYFILE}"
+[org/gnome/desktop/media-handling]
+automount=false
+automount-open=false
+EOF
+      run_command "dconf update" "1.7.6 Apply dconf changes"
+    fi
 
-# =====================[ SECTION 1.7.6: Disable GDM automatic mounting of removable media ]=====================
-start_section "1.7.6"
+    # =====================[ SECTION 1.7.7: Lock GDM automount settings ]=====================
+    start_section "1.7.7"
 
-DCONF_DB="local"
-DCONF_PROFILE="/etc/dconf/profile/user"
-DCONF_DB_DIR="/etc/dconf/db/${DCONF_DB}.d"
-DCONF_KEYFILE="${DCONF_DB_DIR}/00-media-automount"
+    LOCK_FILE="/etc/dconf/db/${DCONF_DB}.d/locks/00-media-automount"
+    run_command "mkdir -p ${LOCK_DIR}" "1.7.7 Ensure dconf lock directory exists"
+    run_command "echo '/org/gnome/desktop/media-handling/automount' > ${LOCK_FILE}" "1.7.7 Lock automount setting"
+    run_command "echo '/org/gnome/desktop/media-handling/automount-open' >> ${LOCK_FILE}" "1.7.7 Lock automount-open setting"
+    run_command "dconf update" "1.7.7 Apply dconf changes"
 
-# Check if running in graphical session
-if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-  run_command "gsettings set org.gnome.desktop.media-handling automount false" "1.7.6 Disable automount via gsettings"
-  run_command "gsettings set org.gnome.desktop.media-handling automount-open false" "1.7.6 Disable automount-open via gsettings"
-else
-  log_message "1.7.6 Not in graphical session — applying system-wide dconf configuration"
+    # =====================[ SECTION 1.7.8: Ensure GDM autorun-never is enabled ]=====================
+    start_section "1.7.8"
 
-  # Ensure dconf profile includes the local database
-  run_command "mkdir -p /etc/dconf/profile" "1.7.6 Ensure /etc/dconf/profile exists"
-  if ! grep -q "system-db:${DCONF_DB}" "${DCONF_PROFILE}" 2>/dev/null; then
-    run_command "echo -e '\nuser-db:user\nsystem-db:${DCONF_DB}' >> ${DCONF_PROFILE}" "1.7.6 Add ${DCONF_DB} to dconf profile"
+    DCONF_KEYFILE="/etc/dconf/db/${DCONF_DB}.d/00-media-autorun"
+
+    if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+      run_command "gsettings set org.gnome.desktop.media-handling autorun-never true" "1.7.8 Set autorun-never via gsettings"
+    else
+      log_message "1.7.8 Not in graphical session — applying system-wide dconf configuration"
+      run_command "mkdir -p /etc/dconf/profile" "1.7.8 Ensure /etc/dconf/profile exists"
+      if ! grep -q "system-db:${DCONF_DB}" "${DCONF_PROFILE}" 2>/dev/null; then
+        run_command "echo -e '\nuser-db:user\nsystem-db:${DCONF_DB}' >> ${DCONF_PROFILE}" "1.7.8 Add ${DCONF_DB} to dconf profile"
+      fi
+      run_command "mkdir -p ${DCONF_DB_DIR}" "1.7.8 Ensure dconf database directory exists"
+      cat <<EOF > "${DCONF_KEYFILE}"
+[org/gnome/desktop/media-handling]
+autorun-never=true
+EOF
+      run_command "dconf update" "1.7.8 Apply dconf changes"
+    fi
+
+    # =====================[ SECTION 1.7.9: Lock GDM autorun-never setting ]=====================
+    start_section "1.7.9"
+
+    LOCK_FILE="/etc/dconf/db/${DCONF_DB}.d/locks/00-media-autorun"
+    run_command "mkdir -p ${LOCK_DIR}" "1.7.9 Ensure dconf lock directory exists"
+    run_command "echo '/org/gnome/desktop/media-handling/autorun-never' > ${LOCK_FILE}" "1.7.9 Lock autorun-never setting"
+    run_command "dconf update" "1.7.9 Apply dconf changes"
+  else
+    log_message "GDM is not installed — skipping sections 1.7.5 to 1.7.9"
   fi
 
-  # Create dconf database directory and keyfile
-  run_command "mkdir -p ${DCONF_DB_DIR}" "1.7.6 Ensure dconf database directory exists"
-  run_command "echo -e '[org/gnome/desktop/media-handling]\nautomount=false\nautomount-open=false' > ${DCONF_KEYFILE}" "1.7.6 Write automount settings"
+  # =====================[ SECTION 1.7.10: Ensure XDMCP is not enabled ]=====================
+  start_section "1.7.10"
 
-  # Apply dconf changes
-  run_command "dconf update" "1.7.6 Apply dconf changes"
-fi
-
-# =====================[ SECTION 1.7.7: Lock GDM automount settings ]=====================
-start_section "1.7.7"
-
-DCONF_DB="local"
-LOCK_DIR="/etc/dconf/db/${DCONF_DB}.d/locks"
-LOCK_FILE="${LOCK_DIR}/00-media-automount"
-
-# Ensure lock directory exists
-run_command "mkdir -p ${LOCK_DIR}" "1.7.7 Ensure dconf lock directory exists"
-
-# Write lock entries
-run_command "echo '/org/gnome/desktop/media-handling/automount' > ${LOCK_FILE}" "1.7.7 Lock automount setting"
-run_command "echo '/org/gnome/desktop/media-handling/automount-open' >> ${LOCK_FILE}" "1.7.7 Lock automount-open setting"
-
-# Apply dconf changes
-run_command "dconf update" "1.7.7 Apply dconf changes"
-
-# =====================[ SECTION 1.7.8: Ensure GDM autorun-never is enabled ]=====================
-start_section "1.7.8"
-
-DCONF_DB="local"
-DCONF_PROFILE="/etc/dconf/profile/user"
-DCONF_DB_DIR="/etc/dconf/db/${DCONF_DB}.d"
-DCONF_KEYFILE="${DCONF_DB_DIR}/00-media-autorun"
-
-# Check if running in graphical session
-if [ "$XDG_SESSION_TYPE" = "x11" ] || [ "$XDG_SESSION_TYPE" = "wayland" ]; then
-  run_command "gsettings set org.gnome.desktop.media-handling autorun-never true" "1.7.8 Set autorun-never via gsettings"
-else
-  log_message "1.7.8 Not in graphical session — applying system-wide dconf configuration"
-
-  # Ensure dconf profile includes the local database
-  run_command "mkdir -p /etc/dconf/profile" "1.7.8 Ensure /etc/dconf/profile exists"
-  if ! grep -q "system-db:${DCONF_DB}" "${DCONF_PROFILE}" 2>/dev/null; then
-    run_command "echo -e '\nuser-db:user\nsystem-db:${DCONF_DB}' >> ${DCONF_PROFILE}" "1.7.8 Add ${DCONF_DB} to dconf profile"
-  fi
-
-  # Create dconf database directory and keyfile
-  run_command "mkdir -p ${DCONF_DB_DIR}" "1.7.8 Ensure dconf database directory exists"
-  run_command "echo -e '[org/gnome/desktop/media-handling]\nautorun-never=true' > ${DCONF_KEYFILE}" "1.7.8 Write autorun-never setting"
-
-  # Apply dconf changes
-  run_command "dconf update" "1.7.8 Apply dconf changes"
-fi
-
-# =====================[ SECTION 1.7.9: Lock GDM autorun-never setting ]=====================
-start_section "1.7.9"
-
-DCONF_DB="local"
-LOCK_DIR="/etc/dconf/db/${DCONF_DB}.d/locks"
-LOCK_FILE="${LOCK_DIR}/00-media-autorun"
-
-# Ensure lock directory exists
-run_command "mkdir -p ${LOCK_DIR}" "1.7.9 Ensure dconf lock directory exists"
-
-# Write lock entry
-run_command "echo '/org/gnome/desktop/media-handling/autorun-never' > ${LOCK_FILE}" "1.7.9 Lock autorun-never setting"
-
-# Apply dconf changes
-run_command "dconf update" "1.7.9 Apply dconf changes"
-
-# =====================[ SECTION 1.7.10: Ensure XDMCP is not enabled ]=====================
-start_section "1.7.10"
-
-GDM_CONF="/etc/gdm/custom.conf"
-
-# Check if file exists and contains active XDMCP enablement
-if [ -f "$GDM_CONF" ]; then
-  if grep -Pq '^\s*
+  GDM_CONF="/etc/gdm/custom.conf"
+  if [ -f "$GDM_CONF" ]; then
+    if grep -Pq '^\s*
 
 \[xdmcp\]
 
 ' "$GDM_CONF" && grep -Pq '^\s*Enable\s*=\s*true\b' "$GDM_CONF"; then
-    run_command "sed -ri '/^\s*Enable\s*=\s*true\b/ s/^/# /' ${GDM_CONF}" "1.7.10 Comment out Enable=true in [xdmcp] block"
+      run_command "sed -ri '/^\s*Enable\s*=\s*true\b/ s/^/# /' ${GDM_CONF}" "1.7.10 Comment out Enable=true in [xdmcp] block"
+    else
+      log_message "1.7.10 XDMCP is not enabled — no action needed"
+    fi
   else
-    log_message "1.7.10 XDMCP is not enabled — no action needed"
+    log_message "1.7.10 GDM config file not found — skipping"
   fi
-else
-  log_message "1.7.10 GDM config file not found — skipping"
+fi 
+
+######################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.1" ]]; then
+  # =====================[ SECTION 2.1: Disable Unused Services ]=====================
+  start_section "2.1"
+
+  # List of services to disable/remove
+  SERVICES=(
+    autofs avahi-daemon isc-dhcp-server bind9 dnsmasq smbd vsftpd dovecot nfs-server ypserv cups rpcbind rsync snmpd telnet.socket
+    tftp.socket squid apache2 xinetd x11-common postfix
+  )
+
+  for svc in "${SERVICES[@]}"; do
+    if systemctl list-unit-files | grep -q "^${svc}"; then
+      if systemctl is-enabled "$svc" &>/dev/null || systemctl is-active "$svc" &>/dev/null; then
+        run_command "systemctl stop $svc" "2.1 Stop service: $svc"
+        run_command "systemctl disable $svc" "2.1 Disable service: $svc"
+        run_command "systemctl mask $svc" "2.1 Mask service: $svc"
+      else
+        log_message "2.1 Service $svc is already inactive/disabled"
+      fi
+    else
+      log_message "2.1 Service $svc not found — skipping"
+    fi
+  done
+
+  # List of packages to remove (if not required)
+  PACKAGES=(
+    autofs avahi-daemon isc-dhcp-server bind9 dnsmasq samba vsftpd dovecot-core nfs-common nis cups rpcbind rsync snmp telnetd
+    tftpd-hpa squid apache2 x11-common postfix
+  )
+
+  for pkg in "${PACKAGES[@]}"; do
+    if dpkg -l | grep -qw "$pkg"; then
+      run_command "apt purge -y $pkg" "2.1 Remove package: $pkg"
+    else
+      log_message "2.1 Package $pkg is not installed — skipping"
+    fi
+  done
+
+  # =====================[ SECTION 2.1.21: Configure MTA for Local-Only Mode ]=====================
+  start_section "2.1.21"
+
+  if dpkg -l | grep -qw postfix; then
+    POSTFIX_CONF="/etc/postfix/main.cf"
+    SETTING="inet_interfaces = loopback-only"
+
+    if grep -q "^inet_interfaces" "$POSTFIX_CONF"; then
+      run_command "sed -i 's/^inet_interfaces.*/${SETTING}/' $POSTFIX_CONF" "2.1.21 Update inet_interfaces to loopback-only"
+    else
+      run_command "echo '${SETTING}' >> $POSTFIX_CONF" "2.1.21 Add inet_interfaces = loopback-only to postfix config"
+    fi
+
+    run_command "systemctl restart postfix" "2.1.21 Restart postfix service"
+  else
+    log_message "2.1.21 Postfix is not installed — skipping"
+  fi
+
+  # =====================[ SECTION 2.1.22: Restrict Network-Listening Services ]=====================
+  start_section "2.1.22"
+
+  declare -A SERVICES_PACKAGES=(
+    [telnet]="telnetd"
+    [ftp]="vsftpd"
+    [tftp]="tftpd-hpa"
+    [rsync]="rsync"
+    [rpcbind]="rpcbind"
+    [cups]="cups"
+    [samba]="samba"
+    [nfs-server]="nfs-common"
+    [postfix]="postfix"
+    [apache2]="apache2"
+    [squid]="squid"
+    [xinetd]="xinetd"
+  )
+
+  for svc in "${!SERVICES_PACKAGES[@]}"; do
+    pkg="${SERVICES_PACKAGES[$svc]}"
+
+    if systemctl list-unit-files | grep -q "^${svc}" || systemctl list-unit-files | grep -q "^${svc}.socket"; then
+      if systemctl is-active "${svc}.service" &>/dev/null || systemctl is-active "${svc}.socket" &>/dev/null; then
+        run_command "systemctl stop ${svc}.service ${svc}.socket" "2.1.22 Stop ${svc} service and socket"
+      fi
+
+      if dpkg -l | grep -qw "$pkg"; then
+        run_command "apt purge -y $pkg" "2.1.22 Remove package: $pkg"
+      else
+        run_command "systemctl mask ${svc}.service ${svc}.socket" "2.1.22 Mask ${svc} service and socket"
+      fi
+    else
+      log_message "2.1.22 ${svc} service not found or inactive — no action needed"
+    fi
+  done
 fi
 
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.2" ]]; then
+  # =====================[ SECTION 2.2: Remove Unused Client Tools ]=====================
+  start_section "2.2"
+
+  CLIENT_PACKAGES=(
+    nis            # 2.2.1 NIS client
+    rsh-client     # 2.2.2 rsh client
+    talk           # 2.2.3 talk client
+    telnet         # 2.2.4 telnet client
+    ldap-utils     # 2.2.5 LDAP client
+    ftp            # 2.2.6 FTP client
+  )
+
+  for pkg in "${CLIENT_PACKAGES[@]}"; do
+    if dpkg -l | grep -qw "$pkg"; then
+      run_command "apt purge -y $pkg" "2.2 Remove client package: $pkg"
+    else
+      log_message "2.2 Package $pkg is not installed — no action needed"
+    fi
+  done
+fi
+
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" ]]; then
+  # =====================[ SECTION 2.3: Time Synchronization ]=====================
+  start_section "2.3"
+
+  # 2.3.1 Ensure time synchronization is in use
+  # Check for chrony or systemd-timesyncd
+  if dpkg -l | grep -qw chrony; then
+    log_message "2.3.1 Chrony is installed — proceeding with chrony configuration"
+  elif systemctl list-unit-files | grep -q "^systemd-timesyncd"; then
+    log_message "2.3.1 systemd-timesyncd is available — proceeding with systemd-timesyncd configuration"
+  else
+    run_command "apt update && apt install -y chrony" "2.3.1 Install chrony"
+  fi
+
+  # Set system timezone to Asia/Tehran
+  run_command "timedatectl set-timezone Asia/Tehran" "2.3.1 Set timezone to Asia/Tehran"
+
+  # =====================[ 2.3.2: Configure systemd-timesyncd ]=====================
+  if systemctl list-unit-files | grep -q "^systemd-timesyncd"; then
+    TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
+    TIMESERVER="pool asia.pool.ntp.org"
+
+    # Configure authorized timeserver
+    if ! grep -q "^NTP=" "$TIMESYNC_CONF"; then
+      run_command "sed -i '/^
+
+\[Time\]
+
+/a NTP=${TIMESERVER}' $TIMESYNC_CONF" "2.3.2.1 Add NTP server to timesyncd.conf"
+    else
+      run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3.2.1 Update NTP server in timesyncd.conf"
+    fi
+
+    # Enable and start systemd-timesyncd
+    run_command "systemctl enable systemd-timesyncd" "2.3.2.2 Enable systemd-timesyncd"
+    run_command "systemctl start systemd-timesyncd" "2.3.2.2 Start systemd-timesyncd"
+  fi
+
+  # =====================[ 2.3.3: Configure chrony ]=====================
+  if dpkg -l | grep -qw chrony; then
+    CHRONY_CONF="/etc/chrony/chrony.conf"
+    CHRONY_POOL="pool asia.pool.ntp.org iburst"
+
+    # Ensure authorized timeserver is configured
+    if ! grep -qE '^server|^pool' "$CHRONY_CONF"; then
+      run_command "echo '${CHRONY_POOL}' >> ${CHRONY_CONF}" "2.3.3.1 Add NTP pool to chrony.conf"
+    fi
+
+    # Ensure chrony runs as _chrony
+    CHRONY_SERVICE="/lib/systemd/system/chrony.service"
+    if grep -q '^User=' "$CHRONY_SERVICE"; then
+      run_command "sed -i 's/^User=.*/User=_chrony/' $CHRONY_SERVICE" "2.3.3.2 Ensure chrony runs as _chrony"
+    else
+      run_command "sed -i '/^
+
+\[Service\]
+
+/a User=_chrony' $CHRONY_SERVICE" "2.3.3.2 Add User=_chrony to chrony.service"
+    fi
+
+    # Reload systemd and restart chrony
+    run_command "systemctl daemon-reexec" "2.3.3.2 Reload systemd daemon"
+    run_command "systemctl enable chrony" "2.3.3.3 Enable chrony"
+    run_command "systemctl restart chrony" "2.3.3.3 Restart chrony"
+  fi
+fi
 
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
 
