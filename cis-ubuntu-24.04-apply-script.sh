@@ -792,68 +792,147 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" ]]; then
   # =====================[ SECTION 2.3: Time Synchronization ]=====================
   start_section "2.3"
 
-  # 2.3.1 Ensure time synchronization is in use
-  # Check for chrony or systemd-timesyncd
-  if dpkg -l | grep -qw chrony; then
-    log_message "2.3.1 Chrony is installed — proceeding with chrony configuration"
-  elif systemctl list-unit-files | grep -q "^systemd-timesyncd"; then
-    log_message "2.3.1 systemd-timesyncd is available — proceeding with systemd-timesyncd configuration"
-  else
-    run_command "apt update && apt install -y chrony" "2.3.1 Install chrony"
-  fi
+  # === Choose your preferred time sync daemon ===
+  TIME_SYNC_DAEMON="chrony"  # Options: chrony or systemd-timesyncd
 
-  # Set system timezone to Asia/Tehran
-  run_command "timedatectl set-timezone Asia/Tehran" "2.3.1 Set timezone to Asia/Tehran"
+  if [[ "$TIME_SYNC_DAEMON" == "chrony" ]]; then
+    # ---------------------[ Chrony Setup ]---------------------
+    run_command "apt update && apt install -y chrony" "2.3 Install chrony"
 
-  # =====================[ 2.3.2: Configure systemd-timesyncd ]=====================
-  if systemctl list-unit-files | grep -q "^systemd-timesyncd"; then
-    TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
-    TIMESERVER="pool asia.pool.ntp.org"
-
-    # Configure authorized timeserver
-    if ! grep -q "^NTP=" "$TIMESYNC_CONF"; then
-      run_command "sed -i '/^
-
-\[Time\]
-
-/a NTP=${TIMESERVER}' $TIMESYNC_CONF" "2.3.2.1 Add NTP server to timesyncd.conf"
+    # Disable systemd-timesyncd
+    if systemctl is-active systemd-timesyncd.service &>/dev/null; then
+      run_command "systemctl stop systemd-timesyncd.service" "2.3 Stop systemd-timesyncd"
     else
-      run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3.2.1 Update NTP server in timesyncd.conf"
+      log_message "2.3 systemd-timesyncd is not active — no need to stop"
     fi
+    run_command "systemctl mask systemd-timesyncd.service" "2.3 Mask systemd-timesyncd"
 
-    # Enable and start systemd-timesyncd
-    run_command "systemctl enable systemd-timesyncd" "2.3.2.2 Enable systemd-timesyncd"
-    run_command "systemctl start systemd-timesyncd" "2.3.2.2 Start systemd-timesyncd"
-  fi
+    # Set timezone
+    run_command "timedatectl set-timezone Asia/Tehran" "2.3 Set timezone to Asia/Tehran"
 
-  # =====================[ 2.3.3: Configure chrony ]=====================
-  if dpkg -l | grep -qw chrony; then
+    # Configure chrony
     CHRONY_CONF="/etc/chrony/chrony.conf"
     CHRONY_POOL="pool asia.pool.ntp.org iburst"
-
-    # Ensure authorized timeserver is configured
     if ! grep -qE '^server|^pool' "$CHRONY_CONF"; then
-      run_command "echo '${CHRONY_POOL}' >> ${CHRONY_CONF}" "2.3.3.1 Add NTP pool to chrony.conf"
+      run_command "echo '${CHRONY_POOL}' >> ${CHRONY_CONF}" "2.3 Configure chrony with NTP pool"
     fi
 
     # Ensure chrony runs as _chrony
     CHRONY_SERVICE="/lib/systemd/system/chrony.service"
     if grep -q '^User=' "$CHRONY_SERVICE"; then
-      run_command "sed -i 's/^User=.*/User=_chrony/' $CHRONY_SERVICE" "2.3.3.2 Ensure chrony runs as _chrony"
+      run_command "sed -i 's/^User=.*/User=_chrony/' $CHRONY_SERVICE" "2.3 Ensure chrony runs as _chrony"
     else
       run_command "sed -i '/^
 
 \[Service\]
 
-/a User=_chrony' $CHRONY_SERVICE" "2.3.3.2 Add User=_chrony to chrony.service"
+/a User=_chrony' $CHRONY_SERVICE" "2.3 Add User=_chrony to chrony.service"
     fi
 
-    # Reload systemd and restart chrony
-    run_command "systemctl daemon-reexec" "2.3.3.2 Reload systemd daemon"
-    run_command "systemctl enable chrony" "2.3.3.3 Enable chrony"
-    run_command "systemctl restart chrony" "2.3.3.3 Restart chrony"
+    run_command "systemctl daemon-reexec" "2.3 Reload systemd daemon"
+    run_command "systemctl enable chrony" "2.3 Enable chrony"
+    run_command "systemctl restart chrony" "2.3 Restart chrony"
+
+  elif [[ "$TIME_SYNC_DAEMON" == "systemd-timesyncd" ]]; then
+    # ---------------------[ systemd-timesyncd Setup ]---------------------
+    run_command "apt purge -y chrony" "2.3 Remove chrony"
+    run_command "apt autoremove -y chrony" "2.3 Autoremove chrony dependencies"
+
+    # Set timezone
+    run_command "timedatectl set-timezone Asia/Tehran" "2.3 Set timezone to Asia/Tehran"
+
+    # Configure systemd-timesyncd
+    TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
+    TIMESERVER="pool asia.pool.ntp.org"
+    if ! grep -q "^NTP=" "$TIMESYNC_CONF"; then
+      run_command "sed -i '/^
+
+\[Time\]
+
+/a NTP=${TIMESERVER}' $TIMESYNC_CONF" "2.3 Add NTP server to timesyncd.conf"
+    else
+      run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3 Update NTP server in timesyncd.conf"
+    fi
+
+    run_command "systemctl enable systemd-timesyncd" "2.3 Enable systemd-timesyncd"
+    run_command "systemctl start systemd-timesyncd" "2.3 Start systemd-timesyncd"
   fi
 fi
+
+
+#####################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.4" ]]; then
+  # =====================[ SECTION 2.4.1: Configure cron ]=====================
+  start_section "2.4.1"
+
+  # 2.4.1.1 Ensure cron daemon is enabled and active
+  CRON_SERVICE="cron.service"
+  if systemctl list-unit-files | grep -q "^${CRON_SERVICE}"; then
+    run_command "systemctl unmask ${CRON_SERVICE}" "2.4.1.1 Unmask ${CRON_SERVICE}"
+    run_command "systemctl --now enable ${CRON_SERVICE}" "2.4.1.1 Enable and start ${CRON_SERVICE}"
+  else
+    log_message "2.4.1.1 Cron service not found — skipping"
+  fi
+
+  # 2.4.1.2–2.4.1.7 Ensure permissions on cron directories and files
+  CRON_PATHS=(
+    /etc/crontab
+    /etc/cron.hourly/
+    /etc/cron.daily/
+    /etc/cron.weekly/
+    /etc/cron.monthly/
+    /etc/cron.d/
+  )
+
+  for path in "${CRON_PATHS[@]}"; do
+    run_command "chown root:root $path" "2.4.1 Set owner of $path"
+    run_command "chmod og-rwx $path" "2.4.1 Set permissions of $path"
+  done
+
+  # 2.4.1.8 Restrict crontab to authorized users
+  CRON_ALLOW="/etc/cron.allow"
+  CRON_DENY="/etc/cron.deny"
+
+  if [ ! -e "$CRON_ALLOW" ]; then
+    run_command "touch $CRON_ALLOW" "2.4.1.8 Create cron.allow"
+  fi
+  run_command "chown root:root $CRON_ALLOW" "2.4.1.8 Set owner of cron.allow"
+  run_command "chmod 640 $CRON_ALLOW" "2.4.1.8 Set permissions of cron.allow"
+
+  if [ -e "$CRON_DENY" ]; then
+    run_command "chown root:root $CRON_DENY" "2.4.1.8 Set owner of cron.deny"
+    run_command "chmod 640 $CRON_DENY" "2.4.1.8 Set permissions of cron.deny"
+  fi
+
+  # =====================[ SECTION 2.4.2: Configure at ]=====================
+  start_section "2.4.2"
+
+  if dpkg -l | grep -qw at; then
+    run_command "echo 'at is installed, proceeding with configuration'" "2.4.2.1 Confirm at presence"
+
+    AT_ALLOW="/etc/at.allow"
+    AT_DENY="/etc/at.deny"
+    GROUP=$(getent group daemon &>/dev/null && echo "daemon" || echo "root")
+
+    if [ ! -e "$AT_ALLOW" ]; then
+      run_command "touch $AT_ALLOW" "2.4.2.1 Create at.allow"
+    fi
+    run_command "chown root:$GROUP $AT_ALLOW" "2.4.2.1 Set owner of at.allow"
+    run_command "chmod 640 $AT_ALLOW" "2.4.2.1 Set permissions of at.allow"
+
+    if [ -e "$AT_DENY" ]; then
+      run_command "chown root:$GROUP $AT_DENY" "2.4.2.1 Set owner of at.deny"
+      run_command "chmod 640 $AT_DENY" "2.4.2.1 Set permissions of at.deny"
+    fi
+
+    run_command "stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' $AT_ALLOW" "2.4.2.1 Verify at.allow permissions"
+    run_command "[ -e \"$AT_DENY\" ] && stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' $AT_DENY || echo 'at.deny does not exist'" "2.4.2.1 Verify at.deny status"
+  else
+    log_message "2.4.2.1 'at' is not installed — skipping"
+  fi
+fi
+
+
 
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
 
