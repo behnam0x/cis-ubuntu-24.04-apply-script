@@ -79,54 +79,64 @@ done
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.1" ]]; then
+  # =====================[ SECTION 1.1.1: Disable Filesystem Kernel Modules ]=====================
+  start_section "1.1.1"
 
- # =====================[ SECTION 1.1.1: Disable Filesystem Kernel Modules ]=====================
- start_section "1.1.1"
- 
- # Reusable function to disable a kernel module if it exists
- disable_module() {
-   local mod="$1"
-   local conf="/etc/modprobe.d/${mod}.conf"
-   local bin_false
-   bin_false="$(readlink -f /bin/false)"
- 
-   # Check if module exists in kernel
-   if ! modinfo "$mod" &>/dev/null; then
-     log_message "1.1.1.x Module $mod not found — skipping remediation"
-     return
-   fi
- 
-   # Unload module if loaded
-   if lsmod | grep -q "^$mod"; then
-     run_command "modprobe -r $mod 2>/dev/null || true" "1.1.1.x Unload $mod with modprobe"
-     run_command "rmmod $mod 2>/dev/null || true" "1.1.1.x Remove $mod with rmmod"
-   fi
- 
-   # Add install directive
-   if ! grep -qE "^\s*install\s+$mod\s+$bin_false" "$conf" 2>/dev/null; then
-     run_command "echo 'install $mod $bin_false' >> $conf" "1.1.1.x Add install directive for $mod"
-   fi
- 
-   # Add blacklist directive
-   if ! grep -qE "^\s*blacklist\s+$mod" "$conf" 2>/dev/null; then
-     run_command "echo 'blacklist $mod' >> $conf" "1.1.1.x Add blacklist directive for $mod"
-   fi
- }
- 
- # List of filesystem modules to disable (CIS 1.1.1.1 – 1.1.1.9)
- for mod in cramfs freevxfs hfs hfsplus jffs2 squashfs udf usb-storage overlayfs; do
-   disable_module "$mod"
- done
- 
- # Remove related user-space tools (CIS 1.1.1.9)
- for pkg in cramfs-utils squashfs-tools; do
-   if dpkg -l | grep -qw "$pkg"; then
-     run_command "apt purge -y $pkg" "1.1.1.9 Remove $pkg package"
-   else
-     log_message "1.1.1.9 Package $pkg not installed — skipping purge"
-   fi
- done
+  disable_module() {
+    local mod="$1"
+    local conf="/etc/modprobe.d/${mod}.conf"
+    local bin_false
+    bin_false="$(readlink -f /bin/false)"
 
+    # Check if module exists
+    if ! modinfo "$mod" &>/dev/null; then
+      log_message "1.1.1.x Module $mod not found — skipping remediation"
+      return
+    fi
+
+    # Unload module if loaded
+    if lsmod | grep -q "^$mod"; then
+      run_command "modprobe -r $mod 2>/dev/null || true" "1.1.1.x Unload $mod with modprobe"
+      run_command "rmmod $mod 2>/dev/null || true" "1.1.1.x Remove $mod with rmmod"
+    fi
+
+    # Add install directive
+    if ! grep -qE "^\s*install\s+$mod\s+$bin_false" "$conf" 2>/dev/null; then
+      run_command "echo 'install $mod $bin_false' >> $conf" "1.1.1.x Add install directive for $mod"
+    fi
+
+    # Add blacklist directive
+    if ! grep -qE "^\s*blacklist\s+$mod" "$conf" 2>/dev/null; then
+      run_command "echo 'blacklist $mod' >> $conf" "1.1.1.x Add blacklist directive for $mod"
+    fi
+  }
+
+  # CIS 1.1.1.1 – 1.1.1.9: Disable common filesystem modules
+  for mod in cramfs freevxfs hfs hfsplus jffs2 squashfs udf usb-storage overlayfs; do
+    disable_module "$mod"
+  done
+
+  # CIS 1.1.1.9: Remove related user-space tools
+  for pkg in cramfs-utils squashfs-tools; do
+    if dpkg -l | grep -qw "$pkg"; then
+      run_command "apt purge -y $pkg" "1.1.1.9 Remove $pkg package"
+    else
+      log_message "1.1.1.9 Package $pkg not installed — skipping purge"
+    fi
+  done
+
+  # =====================[ SECTION 1.1.1.10: Disable Unused Filesystem Modules with Known CVEs ]=====================
+  start_section "1.1.1.10"
+
+  # List of high-risk modules to disable if unused
+  for mod in afs ceph cifs exfat ext fat fscache fuse gfs2 nfs_common nfsd smbfs_common; do
+    # Check if module exists and is not in use
+    if modinfo "$mod" &>/dev/null && ! lsmod | grep -q "^$mod"; then
+      disable_module "$mod"
+    else
+      log_message "1.1.1.10 Module $mod is loaded or not found — review manually before disabling"
+    fi
+  done
 
  # =====================[ SECTION 1.1.2: Configure Filesystem Partitions ]=====================
  start_section "1.1.2"
@@ -136,7 +146,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.1" ]]; then
    local mount_point="$1"
    local option="$2"
    local checklist="$3"
-   run_command "sed -i \"/[[:space:]]${mount_point}[[:space:]]/ s/defaults/defaults,${option}/\" /etc/fstab" "${checklist} Set ${option} on ${mount_point}"
+   run_command "sed -i \"[[:space:]]${mount_point}[[:space:]]/ s/defaults/defaults,${option}/\" /etc/fstab" "${checklist} Set ${option} on ${mount_point}"
  }
  
  # /tmp
@@ -1413,6 +1423,95 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" ==
   else
     log_message "4.1.1 Warning: Multiple firewall services may still be active"
   fi
+fi
+
+############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1.1" ]]; then
+  # =====================[ SECTION 5.1.1: Secure SSH Configuration Files ]=====================
+  start_section "5.1.1"
+
+  # Secure main sshd_config file
+  run_command "chmod u-x,og-rwx /etc/ssh/sshd_config" "5.1.1 Set permissions on /etc/ssh/sshd_config"
+  run_command "chown root:root /etc/ssh/sshd_config" "5.1.1 Set ownership on /etc/ssh/sshd_config"
+
+  # Secure all *.conf files in /etc/ssh/sshd_config.d
+  while IFS= read -r -d $'\0' l_file; do
+    run_command "chmod u-x,og-rwx \"$l_file\"" "5.1.1 Set permissions on $l_file"
+    run_command "chown root:root \"$l_file\"" "5.1.1 Set ownership on $l_file"
+  done < <(find /etc/ssh/sshd_config.d -type f -name '*.conf' -print0 2>/dev/null)
+
+  # =====================[ Handle Include Directives ]=====================
+  INCLUDE_PATHS=$(grep -E '^\s*Include\s+' /etc/ssh/sshd_config | awk '{print $2}')
+  for path in $INCLUDE_PATHS; do
+    # Expand wildcards and secure matching *.conf files
+    for file in $(find $(dirname "$path") -type f -name "$(basename "$path")" 2>/dev/null); do
+      run_command "chmod u-x,og-rwx \"$file\"" "5.1.1 Set permissions on included file $file"
+      run_command "chown root:root \"$file\"" "5.1.1 Set ownership on included file $file"
+    done
+  done
+
+  # =====================[ SECTION 5.1.2: Secure SSH Private Host Key Files ]=====================
+  start_section "5.1.2"
+
+  # Determine SSH group name (if any)
+  SSH_GROUP=$(awk -F: '($1 ~ /^(ssh_keys|_?ssh)$/) {print $1}' /etc/group)
+
+  # Find and process private SSH host key files
+  while IFS= read -r -d $'\0' file; do
+    if ssh-keygen -lf "$file" &>/dev/null && file "$file" | grep -Piq '\bopenssh\b.*\bprivate key\b'; then
+      # Get file mode, owner, and group
+      read -r mode owner group <<< "$(stat -Lc '%a %U %G' "$file")"
+
+      # Determine expected permissions
+      if [[ "$group" == "$SSH_GROUP" ]]; then
+        expected_mode="0640"
+        run_command "chmod u-x,g-wx,o-rwx \"$file\"" "5.1.2 Restrict permissions on $file (group: $group)"
+      else
+        expected_mode="0600"
+        run_command "chmod u-x,go-rwx \"$file\"" "5.1.2 Restrict permissions on $file (group: $group)"
+      fi
+
+      # Fix ownership if needed
+      if [[ "$owner" != "root" ]]; then
+        run_command "chown root \"$file\"" "5.1.2 Set owner to root for $file"
+      fi
+
+      # Fix group if needed
+      if [[ "$group" != "$SSH_GROUP" && "$group" != "root" ]]; then
+        new_group="${SSH_GROUP:-root}"
+        run_command "chgrp \"$new_group\" \"$file\"" "5.1.2 Set group to $new_group for $file"
+      fi
+    fi
+  done < <(find -L /etc/ssh -xdev -type f -print0 2>/dev/null)
+
+  # =====================[ SECTION 5.1.3: Secure SSH Public Host Key Files ]=====================
+  start_section "5.1.3"
+
+  # Define permission mask and expected mode
+  PERM_MASK=0133
+  EXPECTED_MODE=$(printf '%o' $((0777 & ~$PERM_MASK)))
+
+  # Find and process public SSH host key files
+  while IFS= read -r -d $'\0' file; do
+    if ssh-keygen -lf "$file" &>/dev/null && file "$file" | grep -Piq '\bopenssh\b.*\bpublic key\b'; then
+      read -r mode owner group <<< "$(stat -Lc '%a %U %G' "$file")"
+
+      # Fix permissions if needed
+      if (( mode & PERM_MASK )); then
+        run_command "chmod u-x,go-wx \"$file\"" "5.1.3 Restrict permissions on $file"
+      fi
+
+      # Fix ownership if needed
+      if [[ "$owner" != "root" ]]; then
+        run_command "chown root \"$file\"" "5.1.3 Set owner to root for $file"
+      fi
+
+      # Fix group if needed
+      if [[ "$group" != "root" ]]; then
+        run_command "chgrp root \"$file\"" "5.1.3 Set group to root for $file"
+      fi
+    fi
+  done < <(find -L /etc/ssh -xdev -type f -print0 2>/dev/null)
 fi
 
 
