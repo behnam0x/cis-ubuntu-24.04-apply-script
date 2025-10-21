@@ -932,6 +932,489 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.4" ]]; then
   fi
 fi
 
+######################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.1" ]]; then
+  # =====================[ SECTION 3.1.1: Disable IPv6 (Manual) ]=====================
+  start_section "3.1.1"
+
+  # Create sysctl config to disable IPv6
+  run_command "cat <<EOF > /etc/sysctl.d/99-disable-ipv6.conf
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+EOF" "3.1.1 Create sysctl config to disable IPv6"
+
+  # Apply sysctl settings
+  run_command "sysctl --system" "3.1.1 Apply sysctl changes"
+
+  # Prevent IPv6 kernel module from loading
+  run_command "echo 'install ipv6 /bin/true' > /etc/modprobe.d/disable-ipv6.conf" "3.1.1 Block IPv6 module loading"
+
+  # Optional: Verify IPv6 is disabled
+  run_command "ip a | grep inet6 || echo 'IPv6 is disabled'" "3.1.1 Confirm IPv6 status"
+
+  # Reminder: Reboot required for full effect
+  echo "🔁 Reboot is recommended to fully disable IPv6 across all interfaces."
+
+  # =====================[ SECTION 3.1.2: Disable Wireless Interfaces (Automated) ]=====================
+  start_section "3.1.2"
+
+  # Function to disable a wireless module
+  disable_module() {
+    local module="$1"
+
+    # Prevent module from loading
+    run_command "echo 'install $module /bin/false' >> /etc/modprobe.d/${module}.conf" "3.1.2 Prevent loading of module: $module"
+
+    # Unload module if active
+    if lsmod | grep -q "^$module"; then
+      run_command "modprobe -r $module" "3.1.2 Unload active module: $module"
+    fi
+
+    # Blacklist module
+    if ! grep -q "blacklist $module" /etc/modprobe.d/*.conf 2>/dev/null; then
+      run_command "echo 'blacklist $module' >> /etc/modprobe.d/${module}.conf" "3.1.2 Blacklist module: $module"
+    fi
+  }
+
+  # Detect wireless interfaces and associated drivers
+  WIRELESS_DRIVERS=$(find /sys/class/net/*/ -type d -name wireless 2>/dev/null | while read -r dir; do
+    readlink -f "$(dirname "$dir")/device/driver/module" | xargs basename
+  done | sort -u)
+
+  # Disable each detected wireless driver
+  for driver in $WIRELESS_DRIVERS; do
+    disable_module "$driver"
+  done
+
+  # =====================[ SECTION 3.1.3: Disable Bluetooth Services (Automated) ]=====================
+  start_section "3.1.3"
+
+  # Check if bluez is installed
+  if dpkg -l | grep -qw bluez; then
+    # Attempt to stop bluetooth service
+    run_command "systemctl stop bluetooth.service" "3.1.3 Stop bluetooth service"
+
+    # Try to purge bluez package
+    if apt purge -y bluez &>/dev/null; then
+      run_command "apt purge -y bluez" "3.1.3 Remove bluez package"
+    else
+      # If bluez is required, mask the service instead
+      run_command "systemctl mask bluetooth.service" "3.1.3 Mask bluetooth service"
+    fi
+  else
+    log_message "3.1.3 bluez package is not installed — no action needed"
+  fi
+
+  # Reminder: Reboot may be required
+  echo "🔁 Reboot is recommended to fully disable Bluetooth services and unload related modules."
+fi
+
+#############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.2" ]]; then
+  # =====================[ SECTION 3.2: Disable Network Kernel Modules ]=====================
+  start_section "3.2"
+
+  # List of network modules to disable
+  NETWORK_MODULES=(
+    dccp
+    tipc
+    rds
+    sctp
+  )
+
+  for module in "${NETWORK_MODULES[@]}"; do
+    # Check if module exists in kernel directories
+    if find /lib/modules/$(uname -r)/kernel -type d -name "$module" | grep -q .; then
+      # Unload if currently loaded
+      if lsmod | grep -q "^$module"; then
+        run_command "modprobe -r $module 2>/dev/null; rmmod $module 2>/dev/null" "3.2 Remove active module: $module"
+      else
+        run_command "echo '$module not currently loaded'" "3.2 Confirm $module not loaded"
+      fi
+
+      # Block loading of the module
+      if ! grep -q "install $module /bin/false" /etc/modprobe.d/${module}.conf 2>/dev/null; then
+        run_command "echo 'install $module /bin/false' >> /etc/modprobe.d/${module}.conf" "3.2 Block loading of module: $module"
+      else
+        log_message "3.2 Module $module already blocked from loading"
+      fi
+
+      # Blacklist the module
+      if ! grep -q "blacklist $module" /etc/modprobe.d/${module}.conf 2>/dev/null; then
+        run_command "echo 'blacklist $module' >> /etc/modprobe.d/${module}.conf" "3.2 Blacklist module: $module"
+      else
+        log_message "3.2 Module $module already blacklisted"
+      fi
+    else
+      run_command "echo '$module module not found in kernel directories'" "3.2 Confirm absence of module: $module"
+    fi
+  done
+fi
+
+######################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
+  # =====================[ SECTION 3.3.1: Disable IP Forwarding ]=====================
+  start_section "3.3.1"
+
+  # Disable IPv4 forwarding persistently
+  run_command "echo 'net.ipv4.ip_forward = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.1 Set net.ipv4.ip_forward = 0"
+  
+  # Apply IPv4 forwarding setting immediately
+  run_command "sysctl -w net.ipv4.ip_forward=0" "3.3.1 Apply IPv4 forwarding setting"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.1 Flush IPv4 routing table"
+
+  # Check if IPv6 is enabled
+  if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+    # Disable IPv6 forwarding persistently
+    run_command "echo 'net.ipv6.conf.all.forwarding = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.1 Set net.ipv6.conf.all.forwarding = 0"
+
+    # Apply IPv6 forwarding setting immediately
+    run_command "sysctl -w net.ipv6.conf.all.forwarding=0" "3.3.1 Apply IPv6 forwarding setting"
+    run_command "sysctl -w net.ipv6.route.flush=1" "3.3.1 Flush IPv6 routing table"
+  else
+    log_message "3.3.1 IPv6 is disabled — skipping IPv6 forwarding configuration"
+  fi
+
+  # =====================[ SECTION 3.3.2: Disable Packet Redirect Sending ]=====================
+  start_section "3.3.2"
+
+  # Persistently disable packet redirects
+  run_command "echo 'net.ipv4.conf.all.send_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.2 Set net.ipv4.conf.all.send_redirects = 0"
+  run_command "echo 'net.ipv4.conf.default.send_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.2 Set net.ipv4.conf.default.send_redirects = 0"
+
+  # Apply settings immediately
+  run_command "sysctl -w net.ipv4.conf.all.send_redirects=0" "3.3.2 Apply net.ipv4.conf.all.send_redirects"
+  run_command "sysctl -w net.ipv4.conf.default.send_redirects=0" "3.3.2 Apply net.ipv4.conf.default.send_redirects"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.2 Flush IPv4 routing table"
+
+  # =====================[ SECTION 3.3.3: Ignore Bogus ICMP Responses ]=====================
+  start_section "3.3.3"
+
+  # Persistently ignore bogus ICMP error responses
+  run_command "echo 'net.ipv4.icmp_ignore_bogus_error_responses = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.3 Set net.ipv4.icmp_ignore_bogus_error_responses = 1"
+
+  # Apply setting immediately
+  run_command "sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1" "3.3.3 Apply bogus ICMP ignore setting"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.3 Flush IPv4 routing table"
+
+  # =====================[ SECTION 3.3.4: Ignore Broadcast ICMP Requests ]=====================
+  start_section "3.3.4"
+
+  # Persistently ignore broadcast ICMP echo requests
+  run_command "echo 'net.ipv4.icmp_echo_ignore_broadcasts = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.4 Set net.ipv4.icmp_echo_ignore_broadcasts = 1"
+
+  # Apply setting immediately
+  run_command "sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1" "3.3.4 Apply broadcast ICMP ignore setting"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.4 Flush IPv4 routing table"
+
+
+  # =====================[ SECTION 3.3.5: Disable ICMP Redirect Acceptance ]=====================
+  start_section "3.3.5"
+
+  # Persistently disable IPv4 ICMP redirect acceptance
+  run_command "echo 'net.ipv4.conf.all.accept_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.5 Set net.ipv4.conf.all.accept_redirects = 0"
+  run_command "echo 'net.ipv4.conf.default.accept_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.5 Set net.ipv4.conf.default.accept_redirects = 0"
+
+  # Apply IPv4 settings immediately
+  run_command "sysctl -w net.ipv4.conf.all.accept_redirects=0" "3.3.5 Apply net.ipv4.conf.all.accept_redirects"
+  run_command "sysctl -w net.ipv4.conf.default.accept_redirects=0" "3.3.5 Apply net.ipv4.conf.default.accept_redirects"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.5 Flush IPv4 routing table"
+
+  # Check if IPv6 is enabled
+  if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+    # Persistently disable IPv6 ICMP redirect acceptance
+    run_command "echo 'net.ipv6.conf.all.accept_redirects = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.5 Set net.ipv6.conf.all.accept_redirects = 0"
+    run_command "echo 'net.ipv6.conf.default.accept_redirects = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.5 Set net.ipv6.conf.default.accept_redirects = 0"
+
+    # Apply IPv6 settings immediately
+    run_command "sysctl -w net.ipv6.conf.all.accept_redirects=0" "3.3.5 Apply net.ipv6.conf.all.accept_redirects"
+    run_command "sysctl -w net.ipv6.conf.default.accept_redirects=0" "3.3.5 Apply net.ipv6.conf.default.accept_redirects"
+    run_command "sysctl -w net.ipv6.route.flush=1" "3.3.5 Flush IPv6 routing table"
+  else
+    log_message "3.3.5 IPv6 is disabled — skipping IPv6 redirect configuration"
+  fi
+
+  # =====================[ UFW Override Handling ]=====================
+  if [ -f /etc/ufw/sysctl.conf ]; then
+    run_command "echo 'net.ipv4.conf.all.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv4 setting in UFW sysctl.conf"
+    run_command "echo 'net.ipv4.conf.default.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv4 default setting in UFW sysctl.conf"
+
+    if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+      run_command "echo 'net.ipv6.conf.all.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv6 setting in UFW sysctl.conf"
+      run_command "echo 'net.ipv6.conf.default.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv6 default setting in UFW sysctl.conf"
+    fi
+
+    # Optional: prevent UFW from overriding system-wide sysctl
+    run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.5 Set IPT_SYSCTL=0 to respect system-wide sysctl"
+  fi
+
+  # =====================[ SECTION 3.3.6: Disable Secure ICMP Redirects ]=====================
+  start_section "3.3.6"
+
+  # Persistently disable secure ICMP redirects for IPv4
+  run_command "echo 'net.ipv4.conf.all.secure_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.6 Set net.ipv4.conf.all.secure_redirects = 0"
+  run_command "echo 'net.ipv4.conf.default.secure_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.6 Set net.ipv4.conf.default.secure_redirects = 0"
+
+  # Apply settings immediately
+  run_command "sysctl -w net.ipv4.conf.all.secure_redirects=0" "3.3.6 Apply net.ipv4.conf.all.secure_redirects"
+  run_command "sysctl -w net.ipv4.conf.default.secure_redirects=0" "3.3.6 Apply net.ipv4.conf.default.secure_redirects"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.6 Flush IPv4 routing table"
+
+  # =====================[ UFW Override Handling ]=====================
+  if [ -f /etc/ufw/sysctl.conf ]; then
+    run_command "echo 'net.ipv4.conf.all.secure_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.6 Mirror net.ipv4.conf.all.secure_redirects in UFW sysctl.conf"
+    run_command "echo 'net.ipv4.conf.default.secure_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.6 Mirror net.ipv4.conf.default.secure_redirects in UFW sysctl.conf"
+
+    # Optional: prevent UFW from overriding system-wide sysctl
+    run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.6 Set IPT_SYSCTL=0 to respect system-wide sysctl"
+  fi
+
+  # =====================[ SECTION 3.3.7: Enable Reverse Path Filtering ]=====================
+  start_section "3.3.7"
+
+  # Persistently enable reverse path filtering
+  run_command "echo 'net.ipv4.conf.all.rp_filter = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.7 Set net.ipv4.conf.all.rp_filter = 1"
+  run_command "echo 'net.ipv4.conf.default.rp_filter = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.7 Set net.ipv4.conf.default.rp_filter = 1"
+
+  # Apply settings immediately
+  run_command "sysctl -w net.ipv4.conf.all.rp_filter=1" "3.3.7 Apply net.ipv4.conf.all.rp_filter"
+  run_command "sysctl -w net.ipv4.conf.default.rp_filter=1" "3.3.7 Apply net.ipv4.conf.default.rp_filter"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.7 Flush IPv4 routing table"
+
+  # =====================[ UFW Override Handling ]=====================
+  if [ -f /etc/ufw/sysctl.conf ]; then
+    run_command "echo 'net.ipv4.conf.all.rp_filter = 1' >> /etc/ufw/sysctl.conf" "3.3.7 Mirror net.ipv4.conf.all.rp_filter in UFW sysctl.conf"
+    run_command "echo 'net.ipv4.conf.default.rp_filter = 1' >> /etc/ufw/sysctl.conf" "3.3.7 Mirror net.ipv4.conf.default.rp_filter in UFW sysctl.conf"
+
+    # Optional: prevent UFW from overriding system-wide sysctl
+    run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.7 Set IPT_SYSCTL=0 to respect system-wide sysctl"
+  fi
+
+  # =====================[ SECTION 3.3.8: Disable Source Routed Packet Acceptance ]=====================
+  start_section "3.3.8"
+
+  # Persistently disable source routed packets for IPv4
+  run_command "echo 'net.ipv4.conf.all.accept_source_route = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.8 Set net.ipv4.conf.all.accept_source_route = 0"
+  run_command "echo 'net.ipv4.conf.default.accept_source_route = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.8 Set net.ipv4.conf.default.accept_source_route = 0"
+
+  # Apply IPv4 settings immediately
+  run_command "sysctl -w net.ipv4.conf.all.accept_source_route=0" "3.3.8 Apply net.ipv4.conf.all.accept_source_route"
+  run_command "sysctl -w net.ipv4.conf.default.accept_source_route=0" "3.3.8 Apply net.ipv4.conf.default.accept_source_route"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.8 Flush IPv4 routing table"
+
+  # Check if IPv6 is enabled
+  if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+    # Persistently disable source routed packets for IPv6
+    run_command "echo 'net.ipv6.conf.all.accept_source_route = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.8 Set net.ipv6.conf.all.accept_source_route = 0"
+    run_command "echo 'net.ipv6.conf.default.accept_source_route = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.8 Set net.ipv6.conf.default.accept_source_route = 0"
+
+    # Apply IPv6 settings immediately
+    run_command "sysctl -w net.ipv6.conf.all.accept_source_route=0" "3.3.8 Apply net.ipv6.conf.all.accept_source_route"
+    run_command "sysctl -w net.ipv6.conf.default.accept_source_route=0" "3.3.8 Apply net.ipv6.conf.default.accept_source_route"
+    run_command "sysctl -w net.ipv6.route.flush=1" "3.3.8 Flush IPv6 routing table"
+  else
+    log_message "3.3.8 IPv6 is disabled — skipping IPv6 source route configuration"
+  fi
+
+  # =====================[ UFW Override Handling ]=====================
+  if [ -f /etc/ufw/sysctl.conf ]; then
+    run_command "echo 'net.ipv4.conf.all.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv4.conf.all.accept_source_route in UFW sysctl.conf"
+    run_command "echo 'net.ipv4.conf.default.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv4.conf.default.accept_source_route in UFW sysctl.conf"
+
+    if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+      run_command "echo 'net.ipv6.conf.all.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv6.conf.all.accept_source_route in UFW sysctl.conf"
+      run_command "echo 'net.ipv6.conf.default.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv6.conf.default.accept_source_route in UFW sysctl.conf"
+    fi
+
+    # Optional: prevent UFW from overriding system-wide sysctl
+    run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.8 Set IPT_SYSCTL=0 to respect system-wide sysctl"
+  fi
+
+  # =====================[ SECTION 3.3.9: Enable Logging of Suspicious Packets ]=====================
+  start_section "3.3.9"
+
+  # Persistently enable logging of martian packets for IPv4
+  run_command "echo 'net.ipv4.conf.all.log_martians = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.9 Set net.ipv4.conf.all.log_martians = 1"
+  run_command "echo 'net.ipv4.conf.default.log_martians = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.9 Set net.ipv4.conf.default.log_martians = 1"
+
+  # Apply settings immediately
+  run_command "sysctl -w net.ipv4.conf.all.log_martians=1" "3.3.9 Apply net.ipv4.conf.all.log_martians"
+  run_command "sysctl -w net.ipv4.conf.default.log_martians=1" "3.3.9 Apply net.ipv4.conf.default.log_martians"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.9 Flush IPv4 routing table"
+
+  # =====================[ UFW Override Handling ]=====================
+  if [ -f /etc/ufw/sysctl.conf ]; then
+    run_command "echo 'net.ipv4.conf.all.log_martians = 1' >> /etc/ufw/sysctl.conf" "3.3.9 Mirror net.ipv4.conf.all.log_martians in UFW sysctl.conf"
+    run_command "echo 'net.ipv4.conf.default.log_martians = 1' >> /etc/ufw/sysctl.conf" "3.3.9 Mirror net.ipv4.conf.default.log_martians in UFW sysctl.conf"
+
+    # Optional: prevent UFW from overriding system-wide sysctl
+    run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.9 Set IPT_SYSCTL=0 to respect system-wide sysctl"
+  fi
+
+  # =====================[ SECTION 3.3.10: Enable TCP SYN Cookies ]=====================
+  start_section "3.3.10"
+
+  # Persistently enable TCP SYN cookies
+  run_command "echo 'net.ipv4.tcp_syncookies = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.10 Set net.ipv4.tcp_syncookies = 1"
+
+  # Apply setting immediately
+  run_command "sysctl -w net.ipv4.tcp_syncookies=1" "3.3.10 Apply net.ipv4.tcp_syncookies"
+  run_command "sysctl -w net.ipv4.route.flush=1" "3.3.10 Flush IPv4 routing table"
+
+  # =====================[ UFW Override Handling ]=====================
+  if [ -f /etc/ufw/sysctl.conf ]; then
+    run_command "echo 'net.ipv4.tcp_syncookies = 1' >> /etc/ufw/sysctl.conf" "3.3.10 Mirror net.ipv4.tcp_syncookies in UFW sysctl.conf"
+
+    # Optional: prevent UFW from overriding system-wide sysctl
+    run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.10 Set IPT_SYSCTL=0 to respect system-wide sysctl"
+  fi
+
+  # =====================[ SECTION 3.3.11: Disable IPv6 Router Advertisements ]=====================
+  start_section "3.3.11"
+
+  # Check if IPv6 is enabled
+  if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+    # Persistently disable IPv6 router advertisements
+    run_command "echo 'net.ipv6.conf.all.accept_ra = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.11 Set net.ipv6.conf.all.accept_ra = 0"
+    run_command "echo 'net.ipv6.conf.default.accept_ra = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.11 Set net.ipv6.conf.default.accept_ra = 0"
+
+    # Apply settings immediately
+    run_command "sysctl -w net.ipv6.conf.all.accept_ra=0" "3.3.11 Apply net.ipv6.conf.all.accept_ra"
+    run_command "sysctl -w net.ipv6.conf.default.accept_ra=0" "3.3.11 Apply net.ipv6.conf.default.accept_ra"
+    run_command "sysctl -w net.ipv6.route.flush=1" "3.3.11 Flush IPv6 routing table"
+
+    # =====================[ UFW Override Handling ]=====================
+    if [ -f /etc/ufw/sysctl.conf ]; then
+      run_command "echo 'net.ipv6.conf.all.accept_ra = 0' >> /etc/ufw/sysctl.conf" "3.3.11 Mirror net.ipv6.conf.all.accept_ra in UFW sysctl.conf"
+      run_command "echo 'net.ipv6.conf.default.accept_ra = 0' >> /etc/ufw/sysctl.conf" "3.3.11 Mirror net.ipv6.conf.default.accept_ra in UFW sysctl.conf"
+
+      # Optional: prevent UFW from overriding system-wide sysctl
+      run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.11 Set IPT_SYSCTL=0 to respect system-wide sysctl"
+    fi
+  else
+    log_message "3.3.11 IPv6 is disabled — skipping router advertisement configuration"
+  fi
+fi
+
+##############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" == "4.2" || "$TARGET_SECTION" == "4.3" || "$TARGET_SECTION" == "4.4" ]]; then
+  # =====================[ SECTION 4.1.1: Choose and Configure Single Firewall Utility ]=====================
+  start_section "4.1.1"
+
+  # Set your preferred firewall utility here: ufw, firewalld, nftables, iptables
+  PREFERRED_FIREWALL="ufw"
+
+  # Disable all other firewall services
+  if [[ "$PREFERRED_FIREWALL" == "ufw" ]]; then
+    run_command "systemctl disable --now firewalld 2>/dev/null || true" "4.1.1 Disable firewalld"
+    run_command "systemctl disable --now nftables 2>/dev/null || true" "4.1.1 Disable nftables"
+
+    # =====================[ SECTION 4.2: Configure UFW ]=====================
+    start_section "4.2.1"
+    run_command "apt-get install -y ufw" "4.2.1 Install UFW"
+
+    start_section "4.2.2"
+    run_command "apt-get purge -y iptables-persistent" "4.2.2 Remove iptables-persistent"
+
+    start_section "4.2.3"
+    run_command "systemctl unmask ufw.service" "4.2.3 Unmask UFW service"
+    run_command "systemctl --now enable ufw.service" "4.2.3 Enable and start UFW service"
+    run_command "ufw enable" "4.2.3 Enable UFW firewall"
+
+    start_section "4.2.4"
+    run_command "ufw allow in on lo" "4.2.4 Allow inbound traffic on loopback"
+    run_command "ufw allow out on lo" "4.2.4 Allow outbound traffic on loopback"
+    run_command "ufw deny in from 127.0.0.0/8" "4.2.4 Deny inbound traffic to loopback from 127.0.0.0/8"
+    run_command "ufw deny in from ::1" "4.2.4 Deny inbound traffic to loopback from ::1"
+
+    start_section "4.2.7"
+    run_command "ufw default deny incoming" "4.2.7 Set default deny for incoming traffic"
+    run_command "ufw default deny outgoing" "4.2.7 Set default deny for outgoing traffic"
+    run_command "ufw default deny routed" "4.2.7 Set default deny for routed traffic"
+
+  elif [[ "$PREFERRED_FIREWALL" == "nftables" ]]; then
+    run_command "systemctl disable --now ufw 2>/dev/null || true" "4.1.1 Disable UFW"
+    run_command "systemctl disable --now firewalld 2>/dev/null || true" "4.1.1 Disable firewalld"
+
+    # =====================[ SECTION 4.3: Configure nftables ]=====================
+    start_section "4.3.1"
+    run_command "apt-get install -y nftables" "4.3.1 Install nftables"
+
+    start_section "4.3.2"
+    run_command "systemctl disable --now ufw 2>/dev/null || true" "4.3.2 Disable UFW with nftables"
+
+    start_section "4.3.3"
+    run_command "iptables -F && iptables -X" "4.3.3 Flush IPv4 iptables rules"
+    run_command "ip6tables -F && ip6tables -X" "4.3.3 Flush IPv6 iptables rules"
+
+    start_section "4.3.4"
+    run_command "nft add table inet filter" "4.3.4 Create nftables table"
+
+    start_section "4.3.5"
+    run_command "nft add chain inet filter input { type filter hook input priority 0; policy drop; }" "4.3.5 Create input chain"
+    run_command "nft add chain inet filter forward { type filter hook forward priority 0; policy drop; }" "4.3.5 Create forward chain"
+    run_command "nft add chain inet filter output { type filter hook output priority 0; policy accept; }" "4.3.5 Create output chain"
+
+    start_section "4.3.6"
+    run_command "nft add rule inet filter input iif lo accept" "4.3.6 Accept loopback traffic"
+    run_command "nft add rule inet filter input ip saddr 127.0.0.0/8 counter drop" "4.3.6 Drop spoofed loopback traffic"
+    run_command "nft add rule inet filter input ip6 saddr ::1 counter drop" "4.3.6 Drop spoofed IPv6 loopback traffic"
+
+    start_section "4.3.8"
+    run_command "nft add rule inet filter input ct state established,related accept" "4.3.8 Accept established/related connections"
+    run_command "nft add rule inet filter input counter drop" "4.3.8 Default deny all other input"
+
+    start_section "4.3.9"
+    run_command "systemctl enable --now nftables" "4.3.9 Enable nftables service"
+
+    start_section "4.3.10"
+    run_command "nft list ruleset > /etc/nftables.conf" "4.3.10 Save nftables ruleset to config"
+
+  elif [[ "$PREFERRED_FIREWALL" == "iptables" ]]; then
+    run_command "systemctl disable --now ufw 2>/dev/null || true" "4.1.1 Disable UFW"
+    run_command "systemctl disable --now firewalld 2>/dev/null || true" "4.1.1 Disable firewalld"
+    run_command "systemctl disable --now nftables 2>/dev/null || true" "4.1.1 Disable nftables"
+
+    # =====================[ SECTION 4.4: Configure iptables ]=====================
+    start_section "4.4.1.1"
+    run_command "apt-get install -y iptables iptables-persistent" "4.4.1.1 Install iptables packages"
+
+    start_section "4.4.1.2"
+    run_command "systemctl disable --now nftables 2>/dev/null || true" "4.4.1.2 Disable nftables with iptables"
+
+    start_section "4.4.1.3"
+    run_command "systemctl disable --now ufw 2>/dev/null || true" "4.4.1.3 Disable UFW with iptables"
+
+    start_section "4.4.2.1"
+    run_command "iptables -P INPUT DROP" "4.4.2.1 Set default deny for INPUT"
+    run_command "iptables -P FORWARD DROP" "4.4.2.1 Set default deny for FORWARD"
+    run_command "iptables -P OUTPUT ACCEPT" "4.4.2.1 Set default policy for OUTPUT"
+
+    start_section "4.4.2.2"
+    run_command "iptables -A INPUT -i lo -j ACCEPT" "4.4.2.2 Accept loopback traffic"
+    run_command "iptables -A OUTPUT -o lo -j ACCEPT" "4.4.2.2 Accept loopback outbound"
+    run_command "iptables -A INPUT -s 127.0.0.0/8 -j DROP" "4.4.2.2 Drop spoofed loopback traffic"
+
+    start_section "4.4.3.1"
+    run_command "ip6tables -P INPUT DROP" "4.4.3.1 Set default deny for IPv6 INPUT"
+    run_command "ip6tables -P FORWARD DROP" "4.4.3.1 Set default deny for IPv6 FORWARD"
+    run_command "ip6tables -P OUTPUT ACCEPT" "4.4.3.1 Set default policy for IPv6 OUTPUT"
+
+    start_section "4.4.3.2"
+    run_command "ip6tables -A INPUT -i lo -j ACCEPT" "4.4.3.2 Accept IPv6 loopback traffic"
+    run_command "ip6tables -A OUTPUT -o lo -j ACCEPT" "4.4.3.2 Accept IPv6 loopback outbound"
+    run_command "ip6tables -A INPUT -s ::1 -j DROP" "4.4.3.2 Drop spoofed IPv6 loopback traffic"
+  fi
+
+  # Final check: confirm only one firewall is active
+  ACTIVE_FIREWALLS=$(systemctl list-units --type=service | grep -E 'ufw|firewalld|nftables' | grep active | wc -l)
+  if [[ "$ACTIVE_FIREWALLS" -eq 1 ]]; then
+    log_message "4.1.1 $PREFERRED_FIREWALL is the only active firewall — compliant"
+  else
+    log_message "4.1.1 Warning: Multiple firewall services may still be active"
+  fi
+fi
+
 
 
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
