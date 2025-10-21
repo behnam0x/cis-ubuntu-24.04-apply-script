@@ -138,52 +138,65 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.1" ]]; then
     fi
   done
 
- # =====================[ SECTION 1.1.2: Configure Filesystem Partitions ]=====================
- start_section "1.1.2"
- 
- # Helper function to enforce mount options in /etc/fstab
- enforce_mount_option() {
-   local mount_point="$1"
-   local option="$2"
-   local checklist="$3"
-   run_command "sed -i \"[[:space:]]${mount_point}[[:space:]]/ s/defaults/defaults,${option}/\" /etc/fstab" "${checklist} Set ${option} on ${mount_point}"
- }
- 
- # /tmp
- enforce_mount_option "/tmp" "nodev" "1.1.2.1.2"
- enforce_mount_option "/tmp" "nosuid" "1.1.2.1.3"
- enforce_mount_option "/tmp" "noexec" "1.1.2.1.4"
- 
- # /dev/shm
- enforce_mount_option "/dev/shm" "nodev" "1.1.2.2.2"
- enforce_mount_option "/dev/shm" "nosuid" "1.1.2.2.3"
- enforce_mount_option "/dev/shm" "noexec" "1.1.2.2.4"
- 
- # /home
- enforce_mount_option "/home" "nodev" "1.1.2.3.2"
- enforce_mount_option "/home" "nosuid" "1.1.2.3.3"
- 
- # /var
- enforce_mount_option "/var" "nodev" "1.1.2.4.2"
- enforce_mount_option "/var" "nosuid" "1.1.2.4.3"
- 
- # /var/tmp
- enforce_mount_option "/var/tmp" "nodev" "1.1.2.5.2"
- enforce_mount_option "/var/tmp" "nosuid" "1.1.2.5.3"
- enforce_mount_option "/var/tmp" "noexec" "1.1.2.5.4"
- 
- # /var/log
- enforce_mount_option "/var/log" "nodev" "1.1.2.6.2"
- enforce_mount_option "/var/log" "nosuid" "1.1.2.6.3"
- enforce_mount_option "/var/log" "noexec" "1.1.2.6.4"
- 
- # /var/log/audit
- enforce_mount_option "/var/log/audit" "nodev" "1.1.2.7.2"
- enforce_mount_option "/var/log/audit" "nosuid" "1.1.2.7.3"
- enforce_mount_option "/var/log/audit" "noexec" "1.1.2.7.4"
- 
- # Apply all mount changes
- run_command "mount -a" "Apply updated mount options from /etc/fstab"
+  # =====================[ SECTION 1.1.2: Configure Filesystem Partitions ]=====================
+  start_section "1.1.2"
+
+  # Helper function to enforce mount options in /etc/fstab
+  enforce_mount_option() {
+    local mount_point="$1"
+    local option="$2"
+    local checklist="$3"
+
+    if grep -qE "[[:space:]]${mount_point}[[:space:]]" /etc/fstab; then
+      run_command "awk -v mp=\"$mount_point\" -v opt=\"$option\" '
+      \$2 == mp {
+        split(\$4, opts, \",\");
+        found = 0;
+        for (i in opts) if (opts[i] == opt) found = 1;
+        if (!found) \$4 = \$4 \",\" opt;
+      }
+      { print }' /etc/fstab > /etc/fstab.tmp && mv /etc/fstab.tmp /etc/fstab" \
+      "${checklist} Set ${option} on ${mount_point}"
+    else
+      log_message "${checklist} ${mount_point} not found in /etc/fstab — FAIL"
+    fi
+  }
+
+  # /tmp
+  enforce_mount_option "/tmp" "nodev" "1.1.2.1.2"
+  enforce_mount_option "/tmp" "nosuid" "1.1.2.1.3"
+  enforce_mount_option "/tmp" "noexec" "1.1.2.1.4"
+
+  # /dev/shm
+  enforce_mount_option "/dev/shm" "nodev" "1.1.2.2.2"
+  enforce_mount_option "/dev/shm" "nosuid" "1.1.2.2.3"
+  enforce_mount_option "/dev/shm" "noexec" "1.1.2.2.4"
+
+  # /home
+  enforce_mount_option "/home" "nodev" "1.1.2.3.2"
+  enforce_mount_option "/home" "nosuid" "1.1.2.3.3"
+
+  # /var
+  enforce_mount_option "/var" "nodev" "1.1.2.4.2"
+  enforce_mount_option "/var" "nosuid" "1.1.2.4.3"
+
+  # /var/tmp
+  enforce_mount_option "/var/tmp" "nodev" "1.1.2.5.2"
+  enforce_mount_option "/var/tmp" "nosuid" "1.1.2.5.3"
+  enforce_mount_option "/var/tmp" "noexec" "1.1.2.5.4"
+
+  # /var/log
+  enforce_mount_option "/var/log" "nodev" "1.1.2.6.2"
+  enforce_mount_option "/var/log" "nosuid" "1.1.2.6.3"
+  enforce_mount_option "/var/log" "noexec" "1.1.2.6.4"
+
+  # /var/log/audit
+  enforce_mount_option "/var/log/audit" "nodev" "1.1.2.7.2"
+  enforce_mount_option "/var/log/audit" "nosuid" "1.1.2.7.3"
+  enforce_mount_option "/var/log/audit" "noexec" "1.1.2.7.4"
+
+  # Apply all mount changes
+  run_command "mount -a" "Apply updated mount options from /etc/fstab"
 fi
 
 ########################################################################################
@@ -1426,7 +1439,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" ==
 fi
 
 ############################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1.1" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   # =====================[ SECTION 5.1.1: Secure SSH Configuration Files ]=====================
   start_section "5.1.1"
 
@@ -1512,6 +1525,479 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1.1" ]]; then
       fi
     fi
   done < <(find -L /etc/ssh -xdev -type f -print0 2>/dev/null)
+
+  # =====================[ SECTION 5.1.4: Configure SSHD Access Control ]=====================
+  start_section "5.1.4"
+
+  # Define your access control method: either AllowUsers or AllowGroups
+  SSHD_ACCESS_TYPE="AllowUsers"  # or "AllowGroups"
+  SSHD_ACCESS_VALUE="adminuser behnam admin"  # comma-separated list of users or groups
+
+  # Backup original config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.4 Backup sshd_config"
+
+  # Insert directive before first Include or Match statement
+  if grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    run_command "sed -i '${LINE_NUM}i\\${SSHD_ACCESS_TYPE} ${SSHD_ACCESS_VALUE}' /etc/ssh/sshd_config" "5.1.4 Insert ${SSHD_ACCESS_TYPE} before Include/Match"
+  else
+    run_command "echo '${SSHD_ACCESS_TYPE} ${SSHD_ACCESS_VALUE}' >> /etc/ssh/sshd_config" "5.1.4 Append ${SSHD_ACCESS_TYPE} to sshd_config"
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.4 Restart SSH service"
+
+  # =====================[ SECTION 5.1.5: Configure SSHD Banner ]=====================
+  start_section "5.1.5"
+
+  # Define banner path and message
+  BANNER_PATH="/etc/issue.net"
+  BANNER_MESSAGE="Authorized users only. All activity may be monitored and reported."
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.5 Backup sshd_config"
+
+  # Insert Banner directive before first Include or Match
+  if grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    run_command "sed -i '${LINE_NUM}i\\Banner ${BANNER_PATH}' /etc/ssh/sshd_config" "5.1.5 Insert Banner directive before Include/Match"
+  else
+    run_command "echo 'Banner ${BANNER_PATH}' >> /etc/ssh/sshd_config" "5.1.5 Append Banner directive to sshd_config"
+  fi
+
+  # Create banner file with sanitized message
+  run_command "printf '%s\\n' \"${BANNER_MESSAGE}\" > ${BANNER_PATH}" "5.1.5 Create banner file"
+  run_command "sed -i 's/\\\
+
+\[mrsv]//g' ${BANNER_PATH}" "5.1.5 Remove platform escape sequences from banner"
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.5 Restart SSH service"
+
+  # =====================[ SECTION 5.1.6: Configure SSHD Ciphers ]=====================
+  start_section "5.1.6"
+
+  # Define the list of weak ciphers to exclude
+  CIPHER_LINE="Ciphers -3des-cbc,aes128-cbc,aes192-cbc,aes256-cbc,chacha20-poly1305@openssh.com"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.6 Backup sshd_config"
+
+  # Insert or update Ciphers directive before first Include or Match
+  if grep -qE '^\s*Ciphers\s+' /etc/ssh/sshd_config; then
+    run_command "sed -i 's|^\s*Ciphers\s\+.*|${CIPHER_LINE}|' /etc/ssh/sshd_config" "5.1.6 Update existing Ciphers directive"
+  elif grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    run_command "sed -i '${LINE_NUM}i\\${CIPHER_LINE}' /etc/ssh/sshd_config" "5.1.6 Insert Ciphers directive before Include/Match"
+  else
+    run_command "echo '${CIPHER_LINE}' >> /etc/ssh/sshd_config" "5.1.6 Append Ciphers directive to sshd_config"
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.6 Restart SSH service"
+
+  # =====================[ SECTION 5.1.7: Configure SSHD ClientAlive Settings ]=====================
+  start_section "5.1.7"
+
+  # Define desired values
+  CLIENT_ALIVE_INTERVAL="ClientAliveInterval 15"
+  CLIENT_ALIVE_COUNT="ClientAliveCountMax 3"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.7 Backup sshd_config"
+
+  # Update existing directives if found
+  run_command "sed -i 's|^\s*ClientAliveInterval\s\+.*|${CLIENT_ALIVE_INTERVAL}|' /etc/ssh/sshd_config" "5.1.7 Set ClientAliveInterval"
+  run_command "sed -i 's|^\s*ClientAliveCountMax\s\+.*|${CLIENT_ALIVE_COUNT}|' /etc/ssh/sshd_config" "5.1.7 Set ClientAliveCountMax"
+
+  # Insert directives before first Include or Match if not present
+  if ! grep -qE '^\s*ClientAliveInterval\b' /etc/ssh/sshd_config || ! grep -qE '^\s*ClientAliveCountMax\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${CLIENT_ALIVE_INTERVAL}\\n${CLIENT_ALIVE_COUNT}' /etc/ssh/sshd_config" "5.1.7 Insert ClientAlive settings before Include/Match"
+    else
+      run_command "echo -e '${CLIENT_ALIVE_INTERVAL}\\n${CLIENT_ALIVE_COUNT}' >> /etc/ssh/sshd_config" "5.1.7 Append ClientAlive settings to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.7 Restart SSH service"
+
+  # =====================[ SECTION 5.1.8: Configure SSHD DisableForwarding ]=====================
+  start_section "5.1.8"
+
+  # Define directive
+  DISABLE_FORWARDING_LINE="DisableForwarding yes"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.8 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*DisableForwarding\s\+.*|${DISABLE_FORWARDING_LINE}|' /etc/ssh/sshd_config" "5.1.8 Update existing DisableForwarding directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*DisableForwarding\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${DISABLE_FORWARDING_LINE}' /etc/ssh/sshd_config" "5.1.8 Insert DisableForwarding before Include/Match"
+    else
+      run_command "echo '${DISABLE_FORWARDING_LINE}' >> /etc/ssh/sshd_config" "5.1.8 Append DisableForwarding to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.8 Restart SSH service"
+
+  # =====================[ SECTION 5.1.9: Disable GSSAPIAuthentication ]=====================
+  start_section "5.1.9"
+
+  # Define directive
+  GSSAPI_LINE="GSSAPIAuthentication no"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.9 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*GSSAPIAuthentication\s\+.*|${GSSAPI_LINE}|' /etc/ssh/sshd_config" "5.1.9 Update existing GSSAPIAuthentication directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*GSSAPIAuthentication\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${GSSAPI_LINE}' /etc/ssh/sshd_config" "5.1.9 Insert GSSAPIAuthentication before Include/Match"
+    else
+      run_command "echo '${GSSAPI_LINE}' >> /etc/ssh/sshd_config" "5.1.9 Append GSSAPIAuthentication to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.9 Restart SSH service"
+
+  # =====================[ SECTION 5.1.10: Disable HostbasedAuthentication ]=====================
+  start_section "5.1.10"
+
+  # Define directive
+  HOSTBASED_LINE="HostbasedAuthentication no"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.10 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*HostbasedAuthentication\s\+.*|${HOSTBASED_LINE}|' /etc/ssh/sshd_config" "5.1.10 Update existing HostbasedAuthentication directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*HostbasedAuthentication\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${HOSTBASED_LINE}' /etc/ssh/sshd_config" "5.1.10 Insert HostbasedAuthentication before Include/Match"
+    else
+      run_command "echo '${HOSTBASED_LINE}' >> /etc/ssh/sshd_config" "5.1.10 Append HostbasedAuthentication to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.10 Restart SSH service"
+
+  # =====================[ SECTION 5.1.11: Enable IgnoreRhosts ]=====================
+  start_section "5.1.11"
+
+  # Define directive
+  IGNORE_RHOSTS_LINE="IgnoreRhosts yes"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.11 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*IgnoreRhosts\s\+.*|${IGNORE_RHOSTS_LINE}|' /etc/ssh/sshd_config" "5.1.11 Update existing IgnoreRhosts directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*IgnoreRhosts\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${IGNORE_RHOSTS_LINE}' /etc/ssh/sshd_config" "5.1.11 Insert IgnoreRhosts before Include/Match"
+    else
+      run_command "echo '${IGNORE_RHOSTS_LINE}' >> /etc/ssh/sshd_config" "5.1.11 Append IgnoreRhosts to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.11 Restart SSH service"
+
+
+  # =====================[ SECTION 5.1.12: Configure SSHD KexAlgorithms ]=====================
+  start_section "5.1.12"
+
+  # Define the list of weak KexAlgorithms to exclude
+  KEX_LINE="KexAlgorithms -diffie-hellman-group1-sha1,diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.12 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*KexAlgorithms\s\+.*|${KEX_LINE}|' /etc/ssh/sshd_config" "5.1.12 Update existing KexAlgorithms directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*KexAlgorithms\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${KEX_LINE}' /etc/ssh/sshd_config" "5.1.12 Insert KexAlgorithms before Include/Match"
+    else
+      run_command "echo '${KEX_LINE}' >> /etc/ssh/sshd_config" "5.1.12 Append KexAlgorithms to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.12 Restart SSH service"
+
+  # =====================[ SECTION 5.1.13: Configure LoginGraceTime ]=====================
+  start_section "5.1.13"
+
+  # Define directive
+  LOGIN_GRACE_LINE="LoginGraceTime 60"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.13 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*LoginGraceTime\s\+.*|${LOGIN_GRACE_LINE}|' /etc/ssh/sshd_config" "5.1.13 Update existing LoginGraceTime directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*LoginGraceTime\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${LOGIN_GRACE_LINE}' /etc/ssh/sshd_config" "5.1.13 Insert LoginGraceTime before Include/Match"
+    else
+      run_command "echo '${LOGIN_GRACE_LINE}' >> /etc/ssh/sshd_config" "5.1.13 Append LoginGraceTime to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.13 Restart SSH service"
+
+  # =====================[ SECTION 5.1.14: Configure SSHD LogLevel ]=====================
+  start_section "5.1.14"
+
+  # Define directive (choose VERBOSE or INFO based on site policy)
+  LOGLEVEL_LINE="LogLevel VERBOSE"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.14 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*LogLevel\s\+.*|${LOGLEVEL_LINE}|' /etc/ssh/sshd_config" "5.1.14 Update existing LogLevel directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*LogLevel\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${LOGLEVEL_LINE}' /etc/ssh/sshd_config" "5.1.14 Insert LogLevel before Include/Match"
+    else
+      run_command "echo '${LOGLEVEL_LINE}' >> /etc/ssh/sshd_config" "5.1.14 Append LogLevel to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.14 Restart SSH service"
+
+  # =====================[ SECTION 5.1.15: Configure SSHD MACs ]=====================
+  start_section "5.1.15"
+
+  # Define the list of weak MACs to exclude
+  MAC_LINE="MACs -hmac-md5,hmac-md5-96,hmac-ripemd160,hmac-sha1-96,umac-64@openssh.com,hmac-md5-etm@openssh.com,hmac-md5-96-etm@openssh.com,hmac-ripemd160-etm@openssh.com,hmac-sha1-96-etm@openssh.com,umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha1-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.15 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*MACs\s\+.*|${MAC_LINE}|' /etc/ssh/sshd_config" "5.1.15 Update existing MACs directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*MACs\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${MAC_LINE}' /etc/ssh/sshd_config" "5.1.15 Insert MACs directive before Include/Match"
+    else
+      run_command "echo '${MAC_LINE}' >> /etc/ssh/sshd_config" "5.1.15 Append MACs directive to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.15 Restart SSH service"
+
+  # =====================[ SECTION 5.1.16: Configure MaxAuthTries ]=====================
+  start_section "5.1.16"
+
+  # Define directive
+  MAX_AUTH_TRIES_LINE="MaxAuthTries 4"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.16 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*MaxAuthTries\s\+.*|${MAX_AUTH_TRIES_LINE}|' /etc/ssh/sshd_config" "5.1.16 Update existing MaxAuthTries directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*MaxAuthTries\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${MAX_AUTH_TRIES_LINE}' /etc/ssh/sshd_config" "5.1.16 Insert MaxAuthTries before Include/Match"
+    else
+      run_command "echo '${MAX_AUTH_TRIES_LINE}' >> /etc/ssh/sshd_config" "5.1.16 Append MaxAuthTries to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.16 Restart SSH service"
+
+  # =====================[ SECTION 5.1.17: Configure MaxSessions ]=====================
+  start_section "5.1.17"
+
+  # Define directive
+  MAX_SESSIONS_LINE="MaxSessions 10"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.17 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*MaxSessions\s\+.*|${MAX_SESSIONS_LINE}|' /etc/ssh/sshd_config" "5.1.17 Update existing MaxSessions directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*MaxSessions\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${MAX_SESSIONS_LINE}' /etc/ssh/sshd_config" "5.1.17 Insert MaxSessions before Include/Match"
+    else
+      run_command "echo '${MAX_SESSIONS_LINE}' >> /etc/ssh/sshd_config" "5.1.17 Append MaxSessions to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.17 Restart SSH service"
+
+  # =====================[ SECTION 5.1.18: Configure MaxStartups ]=====================
+  start_section "5.1.18"
+
+  # Define directive
+  MAX_STARTUPS_LINE="MaxStartups 10:30:60"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.18 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*MaxStartups\s\+.*|${MAX_STARTUPS_LINE}|' /etc/ssh/sshd_config" "5.1.18 Update existing MaxStartups directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*MaxStartups\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${MAX_STARTUPS_LINE}' /etc/ssh/sshd_config" "5.1.18 Insert MaxStartups before Include/Match"
+    else
+      run_command "echo '${MAX_STARTUPS_LINE}' >> /etc/ssh/sshd_config" "5.1.18 Append MaxStartups to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.18 Restart SSH service"
+
+  # =====================[ SECTION 5.1.19: Disable PermitEmptyPasswords ]=====================
+  start_section "5.1.19"
+
+  # Define directive
+  EMPTY_PASSWORDS_LINE="PermitEmptyPasswords no"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.19 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*PermitEmptyPasswords\s\+.*|${EMPTY_PASSWORDS_LINE}|' /etc/ssh/sshd_config" "5.1.19 Update existing PermitEmptyPasswords directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*PermitEmptyPasswords\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${EMPTY_PASSWORDS_LINE}' /etc/ssh/sshd_config" "5.1.19 Insert PermitEmptyPasswords before Include/Match"
+    else
+      run_command "echo '${EMPTY_PASSWORDS_LINE}' >> /etc/ssh/sshd_config" "5.1.19 Append PermitEmptyPasswords to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.19 Restart SSH service"
+
+  # =====================[ SECTION 5.1.20: Disable PermitRootLogin ]=====================
+  start_section "5.1.20"
+
+  # Define directive
+  PERMIT_ROOT_LINE="PermitRootLogin no"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.20 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*PermitRootLogin\s\+.*|${PERMIT_ROOT_LINE}|' /etc/ssh/sshd_config" "5.1.20 Update existing PermitRootLogin directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*PermitRootLogin\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${PERMIT_ROOT_LINE}' /etc/ssh/sshd_config" "5.1.20 Insert PermitRootLogin before Include/Match"
+    else
+      run_command "echo '${PERMIT_ROOT_LINE}' >> /etc/ssh/sshd_config" "5.1.20 Append PermitRootLogin to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.20 Restart SSH service"
+
+  # =====================[ SECTION 5.1.21: Disable PermitUserEnvironment ]=====================
+  start_section "5.1.21"
+
+  # Define directive
+  USER_ENV_LINE="PermitUserEnvironment no"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.21 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*PermitUserEnvironment\s\+.*|${USER_ENV_LINE}|' /etc/ssh/sshd_config" "5.1.21 Update existing PermitUserEnvironment directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*PermitUserEnvironment\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${USER_ENV_LINE}' /etc/ssh/sshd_config" "5.1.21 Insert PermitUserEnvironment before Include/Match"
+    else
+      run_command "echo '${USER_ENV_LINE}' >> /etc/ssh/sshd_config" "5.1.21 Append PermitUserEnvironment to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.21 Restart SSH service"
+
+  # =====================[ SECTION 5.1.22: Enable UsePAM ]=====================
+  start_section "5.1.22"
+
+  # Define directive
+  USE_PAM_LINE="UsePAM yes"
+
+  # Backup sshd_config
+  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.22 Backup sshd_config"
+
+  # Update existing directive if found
+  run_command "sed -i 's|^\s*UsePAM\s\+.*|${USE_PAM_LINE}|' /etc/ssh/sshd_config" "5.1.22 Update existing UsePAM directive"
+
+  # Insert directive before first Include or Match if not present
+  if ! grep -qE '^\s*UsePAM\b' /etc/ssh/sshd_config; then
+    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+    if [[ -n "$LINE_NUM" ]]; then
+      run_command "sed -i '${LINE_NUM}i\\${USE_PAM_LINE}' /etc/ssh/sshd_config" "5.1.22 Insert UsePAM before Include/Match"
+    else
+      run_command "echo '${USE_PAM_LINE}' >> /etc/ssh/sshd_config" "5.1.22 Append UsePAM to sshd_config"
+    fi
+  fi
+
+  # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.22 Restart SSH service"
 fi
 
 
