@@ -2926,9 +2926,20 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   start_section "5.4.2.8"
   
   # Lock non-root accounts that do not have a valid login shell
-  run_command 'valid_shells="^($(awk -F/ '\''$NF != \"nologin\" {print}'\'' /etc/shells | sed -r '\''/^\//{s,/,\\\\/,g;p}'\'' | paste -s -d "|" -))\$"; \
-  awk -v pat="$valid_shells" -F: '\''($1 != "root" && $(NF) !~ pat) {print $1}'\'' /etc/passwd | while read user; do \
-  passwd -S "$user" | awk '\''$2 !~ /^L/ {system("usermod -L " $1)}'\''; done' "5.4.2.8 Lock non-root accounts without valid login shell"
+  run_command '
+  valid_shells=$(grep -Ev "nologin|false" /etc/shells | tr "\n" " ")
+  for user in $(awk -F: '\''$1 != "root" {print $1}'\'' /etc/passwd); do
+    user_shell=$(getent passwd "$user" | cut -d: -f7)
+    if ! echo "$valid_shells" | grep -qw "$user_shell"; then
+      echo "Attempting to lock: $user with shell $user_shell"
+      if passwd -S "$user" | awk '\''$2 !~ /^L/ {exit 0} $2 ~ /^L/ {exit 1}'\''; then
+        usermod -L "$user"
+      fi
+    fi
+  done
+  ' "5.4.2.8 Lock non-root accounts without valid login shell"
+  
+
   
   # =====================[ SECTION 5.4.3.1: Ensure nologin is not listed in /etc/shells ]=====================
   start_section "5.4.3.1"
