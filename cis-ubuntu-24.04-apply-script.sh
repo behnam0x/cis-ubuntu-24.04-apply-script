@@ -199,53 +199,67 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.1" ]]; then
   run_command "mount -a" "Apply updated mount options from /etc/fstab"
 fi
 
-########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.2" ]]; then
 
- # =====================[ SECTION 1.2.1.1: Ensure GPG keys are configured ]=====================
- start_section "1.2.1.1"
- 
- # Check for configured GPG keys in APT keyring
- if apt-key list 2>/dev/null | grep -q "pub"; then
-   log_message "1.2.1.1 GPG keys are present in apt-key keyring"
- else
-   log_message "1.2.1.1 No GPG keys found in apt-key keyring — manual review required"
- fi
- 
- # Check for trusted.gpg.d key files
- if [ -n "$(find /etc/apt/trusted.gpg.d/ -type f -name '*.gpg')" ]; then
-   log_message "1.2.1.1 GPG key files found in /etc/apt/trusted.gpg.d/"
- else
-   log_message "1.2.1.1 No GPG key files found in /etc/apt/trusted.gpg.d/ — manual review required"
- fi
- 
- # Manual remediation reminder
- log_message "1.2.1.1 Manual remediation: Ensure GPG keys are configured according to site policy"
- 
- # =====================[ SECTION 1.2.1.2: Ensure package manager repositories are configured ]=====================
- start_section "1.2.1.2"
- 
- # List configured APT repositories
- run_command "grep -h ^deb /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" "1.2.1.2 List configured APT repositories"
- 
- # Manual remediation reminder
- log_message "1.2.1.2 Manual remediation: Review and configure repositories according to site policy"
- 
- # =====================[ SECTION 1.2.2.1: Ensure updates and security patches are installed ]=====================
- start_section "1.2.2.1"
- 
- # Update package lists
- run_command "apt update" "1.2.2.1 Refresh package index"
- 
- # Upgrade installed packages
- run_command "apt upgrade -y" "1.2.2.1 Apply standard package upgrades"
- 
- # Optional: Perform full distribution upgrade if allowed by site policy
- run_command "apt dist-upgrade -y" "1.2.2.1 Apply full distribution upgrade (site policy dependent)"
- 
- # Manual remediation reminder
- log_message "1.2.2.1 Manual review: Confirm updates and patches align with site policy"
+  # =====================[ SECTION 1.2.1.1: Ensure GPG keys are configured ]=====================
+  start_section "1.2.1.1"
+
+  # Check for configured GPG keys in apt-key keyring
+  if apt-key list 2>/dev/null | grep -q "pub"; then
+    log_message "1.2.1.1 GPG keys are present in apt-key keyring"
+  else
+    log_message "1.2.1.1 No GPG keys found in apt-key keyring — manual review required"
+  fi
+
+  # Check for GPG key files in trusted.gpg.d
+  if find /etc/apt/trusted.gpg.d/ -type f -name '*.gpg' | grep -q .; then
+    log_message "1.2.1.1 GPG key files found in /etc/apt/trusted.gpg.d/"
+  else
+    log_message "1.2.1.1 No GPG key files found in /etc/apt/trusted.gpg.d/ — manual review required"
+  fi
+
+  log_message "1.2.1.1 Manual remediation: Ensure GPG keys are configured according to site policy"
+
+  # =====================[ SECTION 1.2.1.2: Ensure package manager repositories are configured ]=====================
+  start_section "1.2.1.2"
+
+  # List configured APT repositories
+  run_command "grep -h ^deb /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" "1.2.1.2 List configured APT repositories"
+
+  log_message "1.2.1.2 Manual remediation: Review and configure repositories according to site policy"
+
+  # =====================[ SECTION 1.2.2.1: Ensure updates and security patches are installed ]=====================
+  start_section "1.2.2.1"
+
+  run_apt_command() {
+    local CMD="$1"
+    local LABEL="$2"
+    local LOG="/tmp/apt_output.log"
+
+    timeout 60 bash -c "$CMD" > "$LOG" 2>&1
+    local EXIT_CODE=$?
+
+    if [[ $EXIT_CODE -eq 124 ]]; then
+      log_message "$LABEL Timeout: apt command exceeded 60s and was skipped"
+    elif grep -qiE "Could not resolve|Temporary failure|Failed to fetch|Connection timed out|No address associated" "$LOG"; then
+      log_message "$LABEL Network error: Unable to reach repositories"
+    elif grep -qiE "unmet dependencies|dpkg was interrupted|fix-broken install" "$LOG"; then
+      log_message "$LABEL Apt error: Dependency or package issue detected"
+    elif [[ $EXIT_CODE -ne 0 ]]; then
+      log_message "$LABEL Apt failed with exit code $EXIT_CODE"
+    else
+      log_message "$LABEL Success"
+    fi
+  }
+
+  run_apt_command "apt update" "1.2.2.1 Refresh package index"
+  run_apt_command "apt upgrade -y" "1.2.2.1 Apply standard package upgrades"
+  run_apt_command "apt dist-upgrade -y" "1.2.2.1 Apply full distribution upgrade (site policy dependent)"
+
+  log_message "1.2.2.1 Manual review: Confirm updates and patches align with site policy"
 fi
+
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.3" ]]; then
@@ -400,7 +414,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.5" ]]; then
  run_command "apt purge -y apport" "1.5.5 Remove apport package"
 fi
 
-###################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.6" ]]; then
   # =====================[ SECTION 1.6: Configure Command Line Warning Banners ]=====================
   start_section "1.6"
@@ -435,11 +448,13 @@ EOF
   run_command "echo \"$BANNER\" > /etc/issue" "1.6.2 Set /etc/issue banner (local login)"
   run_command "echo \"$BANNER\" > /etc/issue.net" "1.6.3 Set /etc/issue.net banner (remote login)"
 
-  # =====================[ 1.6.1: Message of the Day Configuration ]=====================
+  # Ensure SSH displays the banner before login
+  run_command "sed -i '/^Banner /d' /etc/ssh/sshd_config && echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config" "1.6.x Configure SSH banner directive"
+
+  # =====================[ 1.6.1: Create Custom MOTD Script ]=====================
   run_command "mkdir -p /etc/update-motd.d" "1.6.1 Ensure MOTD directory exists"
   run_command "find /etc/update-motd.d/ -type f ! -name '00-custom' -exec chmod -x {} \;" "1.6.1 Disable default MOTD scripts"
 
-  # Create custom MOTD script
   cat <<'EOF' > /etc/update-motd.d/00-custom
 #!/bin/bash
 
@@ -491,7 +506,7 @@ EOF
   run_command "chmod +x /etc/update-motd.d/00-custom" "1.6.1 Make MOTD script executable"
   run_command "/etc/update-motd.d/00-custom > /etc/motd" "1.6.1 Pipe MOTD output to /etc/motd"
 
-  # =====================[ 1.6.4, 1.6.5, 1.6.6: File Permissions and Ownership ]=====================
+  # =====================[ 1.6.4–1.6.6: File Permissions and Ownership ]=====================
   run_command "chmod 644 /etc/issue /etc/issue.net /etc/update-motd.d/00-custom /etc/motd" "1.6.4–1.6.6 Set banner file permissions"
   run_command "chown root:root /etc/issue /etc/issue.net /etc/update-motd.d/00-custom /etc/motd" "1.6.4–1.6.6 Set banner file ownership"
 
@@ -502,6 +517,7 @@ EOF
 
   run_command "sed -i '/pam_motd.so/d' /etc/pam.d/sshd && echo 'session optional pam_motd.so motd=/etc/motd' >> /etc/pam.d/sshd" "1.6.x Configure PAM to show MOTD"
 fi
+
 
 #####################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.7" ]]; then
@@ -1342,7 +1358,8 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" ==
     start_section "4.2.3"
     run_command "systemctl unmask ufw.service" "4.2.3 Unmask UFW service"
     run_command "systemctl --now enable ufw.service" "4.2.3 Enable and start UFW service"
-    run_command "ufw enable" "4.2.3 Enable UFW firewall"
+    run_command "ufw --force enable" "4.2.3 Enable UFW firewall (forced)"
+
 
     start_section "4.2.4"
     run_command "ufw allow in on lo" "4.2.4 Allow inbound traffic on loopback"
@@ -1545,7 +1562,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.4 Restart SSH service"
 
   # =====================[ SECTION 5.1.5: Configure SSHD Banner ]=====================
   start_section "5.1.5"
@@ -1572,7 +1588,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
 \[mrsv]//g' ${BANNER_PATH}" "5.1.5 Remove platform escape sequences from banner"
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.5 Restart SSH service"
 
   # =====================[ SECTION 5.1.6: Configure SSHD Ciphers ]=====================
   start_section "5.1.6"
@@ -1594,7 +1609,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.6 Restart SSH service"
 
   # =====================[ SECTION 5.1.7: Configure SSHD ClientAlive Settings ]=====================
   start_section "5.1.7"
@@ -1621,7 +1635,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.7 Restart SSH service"
 
   # =====================[ SECTION 5.1.8: Configure SSHD DisableForwarding ]=====================
   start_section "5.1.8"
@@ -1646,7 +1659,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.8 Restart SSH service"
 
   # =====================[ SECTION 5.1.9: Disable GSSAPIAuthentication ]=====================
   start_section "5.1.9"
@@ -1671,7 +1683,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.9 Restart SSH service"
 
   # =====================[ SECTION 5.1.10: Disable HostbasedAuthentication ]=====================
   start_section "5.1.10"
@@ -1696,7 +1707,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.10 Restart SSH service"
 
   # =====================[ SECTION 5.1.11: Enable IgnoreRhosts ]=====================
   start_section "5.1.11"
@@ -1721,7 +1731,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.11 Restart SSH service"
 
 
   # =====================[ SECTION 5.1.12: Configure SSHD KexAlgorithms ]=====================
@@ -1747,7 +1756,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.12 Restart SSH service"
 
   # =====================[ SECTION 5.1.13: Configure LoginGraceTime ]=====================
   start_section "5.1.13"
@@ -1772,7 +1780,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.13 Restart SSH service"
 
   # =====================[ SECTION 5.1.14: Configure SSHD LogLevel ]=====================
   start_section "5.1.14"
@@ -1797,7 +1804,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.14 Restart SSH service"
 
   # =====================[ SECTION 5.1.15: Configure SSHD MACs ]=====================
   start_section "5.1.15"
@@ -1822,7 +1828,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.15 Restart SSH service"
 
   # =====================[ SECTION 5.1.16: Configure MaxAuthTries ]=====================
   start_section "5.1.16"
@@ -1847,7 +1852,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.16 Restart SSH service"
 
   # =====================[ SECTION 5.1.17: Configure MaxSessions ]=====================
   start_section "5.1.17"
@@ -1872,7 +1876,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.17 Restart SSH service"
 
   # =====================[ SECTION 5.1.18: Configure MaxStartups ]=====================
   start_section "5.1.18"
@@ -1897,7 +1900,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.18 Restart SSH service"
 
   # =====================[ SECTION 5.1.19: Disable PermitEmptyPasswords ]=====================
   start_section "5.1.19"
@@ -1922,7 +1924,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.19 Restart SSH service"
 
   # =====================[ SECTION 5.1.20: Disable PermitRootLogin ]=====================
   start_section "5.1.20"
@@ -1947,7 +1948,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.20 Restart SSH service"
 
   # =====================[ SECTION 5.1.21: Disable PermitUserEnvironment ]=====================
   start_section "5.1.21"
@@ -1972,7 +1972,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.21 Restart SSH service"
 
   # =====================[ SECTION 5.1.22: Enable UsePAM ]=====================
   start_section "5.1.22"
@@ -1997,9 +1996,975 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   fi
 
   # Restart SSH service to apply changes
-  run_command "systemctl restart sshd" "5.1.22 Restart SSH service"
+  run_command "systemctl restart sshd || echo 'WARNING: SSH restart failed — check config manually'" "5.1 Final: Restart SSH service"
 fi
 
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.2" ]]; then
+  # =====================[ SECTION 5.2.1: Ensure sudo is installed ]=====================
+  start_section "5.2.1"
+
+  # Check for LDAP requirement (customize this logic based on your environment)
+  if grep -qi 'ldap' /etc/nsswitch.conf || getent passwd | grep -qi 'ldap'; then
+    run_command "apt-get install -y sudo-ldap" "5.2.1 Install sudo-ldap (LDAP detected)"
+  else
+    run_command "apt-get install -y sudo" "5.2.1 Install sudo"
+  fi
+
+  # Verify installation
+  if command -v sudo >/dev/null 2>&1; then
+    log_message "5.2.1 Success: sudo is installed"
+  else
+    log_message "5.2.1 Error: sudo installation failed — manual remediation required"
+  fi
+
+  # =====================[ SECTION 5.2.2: Ensure sudo commands use PTY ]=====================
+  start_section "5.2.2"
+
+  # Create a safe sudoers config fragment
+  echo "Defaults use_pty" > /etc/sudoers.d/00-use-pty
+  run_command "visudo -cf /etc/sudoers.d/00-use-pty" "5.2.2 Validate sudoers fragment syntax"
+  run_command "chmod 440 /etc/sudoers.d/00-use-pty" "5.2.2 Set correct permissions on sudoers fragment"
+
+  # Remove any '!use_pty' entries from /etc/sudoers and valid sudoers.d files
+  run_command "sed -i '/Defaults[[:space:]]*!use_pty/d' /etc/sudoers" "5.2.2 Remove '!use_pty' from /etc/sudoers"
+
+  for file in /etc/sudoers.d/*; do
+    if [[ -f \"$file\" && \"$file\" != *~ && \"$file\" != *.* ]]; then
+      run_command \"sed -i '/Defaults[[:space:]]*!use_pty/d' \"$file\"\" \"5.2.2 Remove '!use_pty' from $file\"
+    fi
+  done
+
+  log_message "5.2.2 Success: sudo is configured to use PTY for all commands"
+
+  # =====================[ SECTION 5.2.3: Ensure sudo log file exists ]=====================
+  start_section "5.2.3"
+
+  # Create sudoers fragment to enable logging
+  echo 'Defaults logfile="/var/log/sudo.log"' > /etc/sudoers.d/00-sudo-log
+  run_command "visudo -cf /etc/sudoers.d/00-sudo-log" "5.2.3 Validate sudoers logging fragment"
+  run_command "chmod 440 /etc/sudoers.d/00-sudo-log" "5.2.3 Set correct permissions on sudoers logging fragment"
+  run_command "chown root:root /etc/sudoers.d/00-sudo-log" "5.2.3 Set ownership on sudoers logging fragment"
+
+  # Ensure log file exists and is writable
+  run_command "touch /var/log/sudo.log" "5.2.3 Create sudo log file if missing"
+  run_command "chmod 600 /var/log/sudo.log" "5.2.3 Set sudo log file permissions"
+  run_command "chown root:root /var/log/sudo.log" "5.2.3 Set sudo log file ownership"
+
+  log_message "5.2.3 Success: sudo logging is configured to /var/log/sudo.log"
+
+  # =====================[ SECTION 5.2.4: Ensure sudo requires password ]=====================
+  start_section "5.2.4"
+
+  # Remove NOPASSWD entries from /etc/sudoers
+  run_command "sed -i '/NOPASSWD/d' /etc/sudoers" "5.2.4 Remove NOPASSWD from /etc/sudoers"
+
+  # Remove NOPASSWD entries from valid sudoers.d files
+  for file in /etc/sudoers.d/*; do
+    if [[ -f \"$file\" && \"$file\" != *~ && \"$file\" != *.* ]]; then
+      run_command \"sed -i '/NOPASSWD/d' \"$file\"\" \"5.2.4 Remove NOPASSWD from $file\"
+      run_command \"visudo -cf \"$file\"\" \"5.2.4 Validate syntax of $file\"
+    fi
+  done
+
+  log_message "5.2.4 Success: All NOPASSWD entries removed — sudo now requires password for escalation"
+
+  # =====================[ SECTION 5.2.5: Ensure sudo re-authentication is not disabled ]=====================
+  start_section "5.2.5"
+
+  # Remove !authenticate from /etc/sudoers
+  run_command "sed -i '/Defaults[[:space:]]*!authenticate/d' /etc/sudoers" "5.2.5 Remove '!authenticate' from /etc/sudoers"
+
+  # Remove !authenticate from valid sudoers.d files
+  for file in /etc/sudoers.d/*; do
+    if [[ -f \"$file\" && \"$file\" != *~ && \"$file\" != *.* ]]; then
+      run_command \"sed -i '/Defaults[[:space:]]*!authenticate/d' \"$file\"\" \"5.2.5 Remove '!authenticate' from $file\"
+      run_command \"visudo -cf \"$file\"\" \"5.2.5 Validate syntax of $file\"
+    fi
+  done
+
+  log_message "5.2.5 Success: All '!authenticate' entries removed — sudo now requires re-authentication"
+
+  # =====================[ SECTION 5.2.6: Ensure sudo authentication timeout is configured correctly ]=====================
+  start_section "5.2.6"
+
+  # Create or update sudoers fragment with correct timeout
+  echo 'Defaults timestamp_timeout=15' > /etc/sudoers.d/00-timeout
+  run_command "visudo -cf /etc/sudoers.d/00-timeout" "5.2.6 Validate sudoers timeout fragment"
+  run_command "chmod 440 /etc/sudoers.d/00-timeout" "5.2.6 Set correct permissions on timeout fragment"
+  run_command "chown root:root /etc/sudoers.d/00-timeout" "5.2.6 Set ownership on timeout fragment"
+
+  # Remove or correct any existing timeout values >15 in /etc/sudoers
+  run_command "sed -i -E '/timestamp_timeout=[0-9]+/s/timestamp_timeout=[0-9]+/timestamp_timeout=15/' /etc/sudoers" "5.2.6 Enforce timeout in /etc/sudoers"
+
+  # Scan and fix valid sudoers.d files
+  for file in /etc/sudoers.d/*; do
+    if [[ -f \"$file\" && \"$file\" != *~ && \"$file\" != *.* ]]; then
+      run_command \"sed -i -E '/timestamp_timeout=[0-9]+/s/timestamp_timeout=[0-9]+/timestamp_timeout=15/' \"$file\"\" \"5.2.6 Enforce timeout in $file\"
+      run_command \"visudo -cf \"$file\"\" \"5.2.6 Validate syntax of $file\"
+    fi
+  done
+
+  log_message "5.2.6 Success: sudo timeout configured to 15 minutes or less"
+
+  # =====================[ SECTION 5.2.7: Restrict access to the su command ]=====================
+  start_section "5.2.7"
+
+  # Create the sugroup if it doesn't exist
+  if ! getent group sugroup >/dev/null; then
+    run_command "groupadd sugroup" "5.2.7 Create 'sugroup' for su access restriction"
+  else
+    log_message "5.2.7 Group 'sugroup' already exists"
+  fi
+
+  # Add PAM restriction to /etc/pam.d/su if not already present
+  PAM_LINE="auth required pam_wheel.so use_uid group=sugroup"
+  if ! grep -Fxq "$PAM_LINE" /etc/pam.d/su; then
+    echo "$PAM_LINE" >> /etc/pam.d/su
+    log_message "5.2.7 PAM configuration updated to restrict su access to 'sugroup'"
+  else
+    log_message "5.2.7 PAM configuration already restricts su access to 'sugroup'"
+  fi
+
+  # Reminder to add authorized users to sugroup
+  log_message "5.2.7 Manual step: Add authorized users to 'sugroup' to allow su access"
+fi
+
+###############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3" ]]; then
+  # =====================[ SECTION 5.3.1.1: Ensure latest version of PAM is installed ]=====================
+  start_section "5.3.1.1"
+
+  # Install or reinstall essential PAM packages using apt
+  apt update
+  apt install --reinstall -y \
+    libpam0g \
+    libpam-modules \
+    libpam-modules-bin \
+    libpam-runtime \
+    libpam-pwquality \
+    libpam-tmpdir \
+    libpam-fprintd
+
+  # Reconfigure PAM profiles to apply changes
+  pam-auth-update --force
+
+  # =====================[ PAM Functionality Test: Validate passwd works ]=====================
+  useradd -m testuser_5311
+  echo "testuser_5311:TempPass123!" | chpasswd
+
+  echo -e "TempPass123!\nNewPass123!\nNewPass123!" | passwd testuser_5311 > /tmp/passwd_test.log 2>&1
+  EXIT_CODE=$?
+
+  if [[ $EXIT_CODE -eq 0 ]]; then
+    log_message "5.3.1.1 [✓] Password change test passed for testuser_5311"
+  else
+    log_message "5.3.1.1 [✗] Password change test failed — check /tmp/passwd_test.log and PAM configuration"
+    ls -l /etc/shadow >> /tmp/passwd_test.log
+    stat /etc/shadow >> /tmp/passwd_test.log
+  fi
+
+
+
+  # =====================[ SECTION 5.3.1.2: Ensure libpam-modules is installed ]=====================
+  start_section "5.3.1.2"
+  
+  # Check if libpam-modules is installed
+  if dpkg -s libpam-modules >/dev/null 2>&1; then
+    # Try to upgrade libpam-modules safely
+    timeout 60 apt-get install --only-upgrade -y libpam-modules > /tmp/pam_modules_upgrade.log 2>&1
+    EXIT_CODE=$?
+  
+    if [[ $EXIT_CODE -eq 124 ]]; then
+      log_message "5.3.1.2 [✗] Timeout: libpam-modules upgrade took too long"
+    elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" /tmp/pam_modules_upgrade.log; then
+      log_message "5.3.1.2 [✗] Network error: Unable to reach repositories — upgrade failed"
+    elif [[ $EXIT_CODE -ne 0 ]]; then
+      log_message "5.3.1.2 [✗] Error: libpam-modules upgrade failed with exit code $EXIT_CODE"
+    else
+      log_message "5.3.1.2 [✓] Success: libpam-modules upgraded"
+    fi
+    log_message "5.3.1.2 Log saved to /tmp/pam_modules_upgrade.log"
+  else
+    log_message "5.3.1.2 [ℹ] libpam-modules is not installed — skipping upgrade"
+  fi
+
+  # =====================[ SECTION 5.3.1.3: Ensure libpam-pwquality is installed ]=====================
+  start_section "5.3.1.3"
+  
+  # Check if libpam-pwquality is installed
+  if dpkg -s libpam-pwquality >/dev/null 2>&1; then
+    log_message "5.3.1.3 [✓] libpam-pwquality is already installed"
+  else
+    # Attempt installation
+    timeout 60 apt-get install -y libpam-pwquality > /tmp/pwquality_install.log 2>&1
+    EXIT_CODE=$?
+  
+    if [[ $EXIT_CODE -eq 124 ]]; then
+      log_message "5.3.1.3 [✗] Timeout: libpam-pwquality installation took too long"
+    elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" /tmp/pwquality_install.log; then
+      log_message "5.3.1.3 [✗] Network error: Unable to reach repositories — installation failed"
+    elif [[ $EXIT_CODE -ne 0 ]]; then
+      log_message "5.3.1.3 [✗] Error: libpam-pwquality installation failed with exit code $EXIT_CODE"
+    else
+      log_message "5.3.1.3 [✓] Success: libpam-pwquality installed"
+    fi
+    log_message "5.3.1.3 Log saved to /tmp/pwquality_install.log"
+  fi
+
+
+  # =====================[ SECTION 5.3.2.1: Ensure pam_unix module is enabled ]=====================
+  start_section "5.3.2.1"
+  
+  # Enable pam_unix module using pam-auth-update
+  timeout 30 pam-auth-update --enable unix > /tmp/pam_unix_enable.log 2>&1
+  EXIT_CODE=$?
+  
+  if [[ $EXIT_CODE -eq 124 ]]; then
+    log_message "5.3.2.1 [✗] Timeout: pam-auth-update took too long"
+  elif grep -qiE "error|failed|not found" /tmp/pam_unix_enable.log; then
+    log_message "5.3.2.1 [✗] Error: Failed to enable pam_unix — check for custom PAM profiles or missing package"
+  elif [[ $EXIT_CODE -ne 0 ]]; then
+    log_message "5.3.2.1 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+  else
+    log_message "5.3.2.1 [✓] Success: pam_unix module enabled"
+  fi
+  log_message "5.3.2.1 Log saved to /tmp/pam_unix_enable.log"
+  
+  # Optional: notify if pam_faillock is used instead
+  if grep -q "pam_faillock.so" /etc/pam.d/common-auth 2>/dev/null; then
+    log_message "5.3.2.1 [ℹ] Note: pam_faillock module is present — ensure it aligns with site policy"
+  fi
+
+  # =====================[ SECTION 5.3.2.2: Ensure pam_faillock module is enabled ]=====================
+  start_section "5.3.2.2"
+
+  # Create faillock profile
+  cat <<EOF > /usr/share/pam-configs/faillock
+Name: Enable pam_faillock to deny access
+Default: yes
+Priority: 0
+Auth-Type: Primary
+Auth:
+ [default=die] pam_faillock.so authfail
+EOF
+
+  # Create faillock_notify profile
+  cat <<EOF > /usr/share/pam-configs/faillock_notify
+Name: Notify of failed login attempts and reset count upon success
+Default: yes
+Priority: 1024
+Auth-Type: Primary
+Auth:
+ requisite pam_faillock.so preauth
+Account-Type: Primary
+Account:
+ required pam_faillock.so
+EOF
+
+  # Enable both profiles
+  timeout 30 pam-auth-update --enable faillock --enable faillock_notify > /tmp/faillock_enable.log 2>&1
+  EXIT_CODE=$?
+
+  if [[ $EXIT_CODE -eq 124 ]]; then
+    log_message "5.3.2.2 [✗] Timeout: pam-auth-update took too long"
+  elif grep -qiE "error|failed|not found" /tmp/faillock_enable.log; then
+    log_message "5.3.2.2 [✗] Error: Failed to enable pam_faillock profiles — check for syntax or package issues"
+  elif [[ $EXIT_CODE -ne 0 ]]; then
+    log_message "5.3.2.2 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+  else
+    log_message "5.3.2.2 [✓] Success: pam_faillock module and notification profile enabled"
+  fi
+  log_message "5.3.2.2 Log saved to /tmp/faillock_enable.log"
+
+
+  # =====================[ SECTION 5.3.2.3: Ensure pam_pwquality module is enabled ]=====================
+  start_section "5.3.2.3"
+
+  # Check if pam_pwquality profile exists
+  if grep -P --quiet '\bpam_pwquality\.so\b' /usr/share/pam-configs/*; then
+    log_message "5.3.2.3 [ℹ] pam_pwquality profile already exists — enabling it"
+  else
+    # Create pam_pwquality profile
+    cat <<EOF > /usr/share/pam-configs/pwquality
+Name: Pwquality password strength checking
+Default: yes
+Priority: 1024
+Conflicts: cracklib
+Password-Type: Primary
+Password:
+ requisite pam_pwquality.so retry=3
+EOF
+    log_message "5.3.2.3 [✓] Created pam_pwquality profile"
+  fi
+
+  # Enable the profile
+  timeout 30 pam-auth-update --enable pwquality > /tmp/pwquality_enable.log 2>&1
+  EXIT_CODE=$?
+
+  if [[ $EXIT_CODE -eq 124 ]]; then
+    log_message "5.3.2.3 [✗] Timeout: pam-auth-update took too long"
+  elif grep -qiE "error|failed|not found" /tmp/pwquality_enable.log; then
+    log_message "5.3.2.3 [✗] Error: Failed to enable pam_pwquality — check for syntax or package issues"
+  elif [[ $EXIT_CODE -ne 0 ]]; then
+    log_message "5.3.2.3 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+  else
+    log_message "5.3.2.3 [✓] Success: pam_pwquality module enabled"
+  fi
+  log_message "5.3.2.3 Log saved to /tmp/pwquality_enable.log"
+
+
+  # =====================[ SECTION 5.3.2.4: Ensure pam_pwhistory module is enabled ]=====================
+  start_section "5.3.2.4"
+
+  # Check if pam_pwhistory profile exists
+  if grep -P --quiet '\bpam_pwhistory\.so\b' /usr/share/pam-configs/*; then
+    log_message "5.3.2.4 [ℹ] pam_pwhistory profile already exists — enabling it"
+  else
+    # Create pam_pwhistory profile
+    cat <<EOF > /usr/share/pam-configs/pwhistory
+Name: pwhistory password history checking
+Default: yes
+Priority: 1024
+Password-Type: Primary
+Password:
+ requisite pam_pwhistory.so remember=24 enforce_for_root try_first_pass use_authtok
+EOF
+    log_message "5.3.2.4 [✓] Created pam_pwhistory profile"
+  fi
+
+  # Enable the profile
+  timeout 30 pam-auth-update --enable pwhistory > /tmp/pwhistory_enable.log 2>&1
+  EXIT_CODE=$?
+
+  if [[ $EXIT_CODE -eq 124 ]]; then
+    log_message "5.3.2.4 [✗] Timeout: pam-auth-update took too long"
+  elif grep -qiE "error|failed|not found" /tmp/pwhistory_enable.log; then
+    log_message "5.3.2.4 [✗] Error: Failed to enable pam_pwhistory — check for syntax or package issues"
+  elif [[ $EXIT_CODE -ne 0 ]]; then
+    log_message "5.3.2.4 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+  else
+    log_message "5.3.2.4 [✓] Success: pam_pwhistory module enabled"
+  fi
+  log_message "5.3.2.4 Log saved to /tmp/pwhistory_enable.log"
+
+
+  # =====================[ SECTION 5.3.3.1.1: Ensure password failed attempts lockout is configured ]=====================
+  start_section "5.3.3.1.1"
+  
+  # Ensure faillock.conf exists and sets deny=5
+  if [[ -f /etc/security/faillock.conf ]]; then
+    if grep -q '^deny[[:space:]]*=' /etc/security/faillock.conf; then
+      run_command "sed -i 's/^deny[[:space:]]*=.*/deny = 5/' /etc/security/faillock.conf" "5.3.3.1.1 [✓] Update deny value in faillock.conf"
+    else
+      echo "deny = 5" >> /etc/security/faillock.conf
+      log_message "5.3.3.1.1 [✓] Added deny = 5 to faillock.conf"
+    fi
+  else
+    echo "deny = 5" > /etc/security/faillock.conf
+    log_message "5.3.3.1.1 [✓] Created faillock.conf with deny = 5"
+  fi
+  
+  # Remove embedded deny= from pam_faillock.so lines in PAM profiles
+  grep -Pl -- '\bpam_faillock\.so\h+([^#\n\r]+\h+)?deny\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+deny=[0-9]+/\1/' \"$file\"" "5.3.3.1.1 [✓] Remove deny= from $file"
+  done
+  
+  log_message "5.3.3.1.1 [✓] Success: Password lockout configured via faillock.conf with deny = 5"
+
+
+  # =====================[ SECTION 5.3.3.1.2: Ensure password unlock time is configured ]=====================
+  start_section "5.3.3.1.2"
+  
+  # Ensure unlock_time = 900 is set in /etc/security/faillock.conf
+  if [[ -f /etc/security/faillock.conf ]]; then
+    if grep -q '^\s*unlock_time\s*=' /etc/security/faillock.conf; then
+      run_command "sed -i 's/^\s*unlock_time\s*=.*/unlock_time = 900/' /etc/security/faillock.conf" "5.3.3.1.2 [✓] Updated unlock_time value in faillock.conf"
+    else
+      echo "unlock_time = 900" >> /etc/security/faillock.conf
+      log_message "5.3.3.1.2 [✓] Appended unlock_time = 900 to faillock.conf"
+    fi
+  else
+    echo "unlock_time = 900" > /etc/security/faillock.conf
+    log_message "5.3.3.1.2 [✓] Created faillock.conf with unlock_time = 900"
+  fi
+  
+  # Remove unlock_time=<N> from pam_faillock.so lines in PAM profiles
+  grep -Pl -- '\bpam_faillock\.so\h+([^#\n\r]+\h+)?unlock_time\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+unlock_time=[0-9]+/\1/' \"$file\"" "5.3.3.1.2 [✓] Removed unlock_time= from $file"
+  done
+  
+  log_message "5.3.3.1.2 [✓] Success: Unlock time set to 900 seconds and PAM profiles cleaned"
+  
+
+  # =====================[ SECTION 5.3.3.1.3: Ensure lockout includes root account ]=====================
+  start_section "5.3.3.1.3"
+  
+  # Ensure even_deny_root is set in faillock.conf
+  if [[ -f /etc/security/faillock.conf ]]; then
+    if ! grep -q '^\s*even_deny_root\b' /etc/security/faillock.conf; then
+      echo "even_deny_root" >> /etc/security/faillock.conf
+      log_message "5.3.3.1.3 [✓] Added even_deny_root to faillock.conf"
+    else
+      log_message "5.3.3.1.3 [ℹ] even_deny_root already present in faillock.conf"
+    fi
+  
+    # Ensure root_unlock_time is 60 or more
+    if grep -q '^\s*root_unlock_time\s*=' /etc/security/faillock.conf; then
+      run_command "sed -i 's/^\s*root_unlock_time\s*=.*/root_unlock_time = 60/' /etc/security/faillock.conf" "5.3.3.1.3 [✓] Updated root_unlock_time to 60"
+    else
+      echo "root_unlock_time = 60" >> /etc/security/faillock.conf
+      log_message "5.3.3.1.3 [✓] Appended root_unlock_time = 60 to faillock.conf"
+    fi
+  else
+    echo -e "even_deny_root\nroot_unlock_time = 60" > /etc/security/faillock.conf
+    log_message "5.3.3.1.3 [✓] Created faillock.conf with even_deny_root and root_unlock_time = 60"
+  fi
+  
+  # Remove even_deny_root and root_unlock_time from PAM profile lines
+  grep -Pl -- '\bpam_faillock\.so\h+([^#\n\r]+\h+)?(even_deny_root|root_unlock_time)' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+(even_deny_root|root_unlock_time=[0-9]+)//g' \"$file\"" "5.3.3.1.3 [✓] Cleaned $file of root-specific faillock options"
+  done
+  
+  log_message "5.3.3.1.3 [✓] Success: Root account now included in lockout policy"
+
+
+  # =====================[ SECTION 5.3.3.2.1: Ensure password number of changed characters is configured ]=====================
+  start_section "5.3.3.2.1"
+  
+  # Comment out existing difok line in pwquality.conf
+  if [[ -f /etc/security/pwquality.conf ]]; then
+    run_command "sed -ri 's/^\\s*difok\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.1 [✓] Commented out difok in pwquality.conf"
+  fi
+  
+  # Create pwquality.conf.d directory if missing
+  if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
+    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.1 [✓] Created pwquality.conf.d directory"
+  fi
+  
+  # Create or overwrite difok setting in custom conf file
+  echo "difok = 2" > /etc/security/pwquality.conf.d/50-pwdifok.conf
+  log_message "5.3.3.2.1 [✓] Set difok = 2 in 50-pwdifok.conf"
+  
+  # Remove difok= from pam_pwquality.so lines in PAM profiles
+  grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?difok\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+difok=[0-9]+/\\1/' \"$file\"" "5.3.3.2.1 [✓] Removed difok= from $file"
+  done
+  
+  log_message "5.3.3.2.1 [✓] Success: Password change character requirement (difok) configured to 2"
+
+  # =====================[ SECTION 5.3.3.2.2: Ensure minimum password length is configured ]=====================
+  start_section "5.3.3.2.2"
+  
+  # Comment out existing minlen line in pwquality.conf
+  if [[ -f /etc/security/pwquality.conf ]]; then
+    run_command "sed -ri 's/^\\s*minlen\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.2 [✓] Commented out minlen in pwquality.conf"
+  fi
+  
+  # Create pwquality.conf.d directory if missing
+  if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
+    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.2 [✓] Created pwquality.conf.d directory"
+  fi
+  
+  # Create or overwrite minlen setting in custom conf file
+  echo "minlen = 14" > /etc/security/pwquality.conf.d/50-pwlength.conf
+  log_message "5.3.3.2.2 [✓] Set minlen = 14 in 50-pwlength.conf"
+  
+  # Remove minlen= from pam_pwquality.so lines in PAM profiles
+  grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?minlen\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+minlen=[0-9]+/\\1/' \"$file\"" "5.3.3.2.2 [✓] Removed minlen= from $file"
+  done
+  
+  log_message "5.3.3.2.2 [✓] Success: Minimum password length configured to 14 characters"
+  
+
+  # =====================[ SECTION 5.3.3.2.3: Ensure password complexity is configured ]=====================
+  start_section "5.3.3.2.3"
+
+  # Comment out complexity settings in pwquality.conf
+  if [[ -f /etc/security/pwquality.conf ]]; then
+    run_command "sed -ri 's/^\\s*minclass\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.3 [✓] Commented out minclass in pwquality.conf"
+    run_command "sed -ri 's/^\\s*[dulo]credit\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.3 [✓] Commented out credit settings in pwquality.conf"
+  fi
+
+  # Create pwquality.conf.d directory if missing
+  if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
+    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.3 [✓] Created pwquality.conf.d directory"
+  fi
+
+  # Create or overwrite complexity settings in custom conf file
+  cat <<EOF > /etc/security/pwquality.conf.d/50-pwcomplexity.conf
+minclass = 3
+dcredit = -1
+ucredit = -1
+lcredit = -1
+ocredit = -1
+EOF
+  log_message "5.3.3.2.3 [✓] Set password complexity in 50-pwcomplexity.conf"
+
+  # Remove complexity arguments from pam_pwquality.so lines in PAM profiles
+  grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?(minclass|[dulo]credit|ocredit)\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+(minclass=[0-9]+|[dulo]credit=-?[0-9]+|ocredit=-?[0-9]+)//g' \"$file\"" "5.3.3.2.3 [✓] Removed complexity arguments from $file"
+  done
+
+  log_message "5.3.3.2.3 [✓] Success: Password complexity configured according to site policy"
+
+
+  # =====================[ SECTION 5.3.3.2.4: Ensure password same consecutive characters is configured ]=====================
+  start_section "5.3.3.2.4"
+  
+  # Comment out existing maxrepeat line in pwquality.conf
+  if [[ -f /etc/security/pwquality.conf ]]; then
+    run_command "sed -ri 's/^\\s*maxrepeat\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.4 [✓] Commented out maxrepeat in pwquality.conf"
+  fi
+  
+  # Create pwquality.conf.d directory if missing
+  if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
+    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.4 [✓] Created pwquality.conf.d directory"
+  fi
+  
+  # Create or overwrite maxrepeat setting in custom conf file
+  echo "maxrepeat = 3" > /etc/security/pwquality.conf.d/50-pwrepeat.conf
+  log_message "5.3.3.2.4 [✓] Set maxrepeat = 3 in 50-pwrepeat.conf"
+  
+  # Remove maxrepeat= from pam_pwquality.so lines in PAM profiles
+  grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?maxrepeat\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+maxrepeat=[0-9]+/\\1/' \"$file\"" "5.3.3.2.4 [✓] Removed maxrepeat= from $file"
+  done
+  
+  log_message "5.3.3.2.4 [✓] Success: Password consecutive character limit (maxrepeat) configured to 3"
+
+
+  # =====================[ SECTION 5.3.3.2.5: Ensure password maximum sequential characters is configured ]=====================
+  start_section "5.3.3.2.5"
+
+  # Comment out existing maxsequence line in pwquality.conf
+  if [[ -f /etc/security/pwquality.conf ]]; then
+    run_command "sed -ri 's/^\\s*maxsequence\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.5 Comment out maxsequence in pwquality.conf"
+  fi
+
+  # Create pwquality.conf.d directory if missing
+  if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
+    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.5 Create pwquality.conf.d directory"
+  fi
+
+  # Create or overwrite maxsequence setting in custom conf file
+  echo "maxsequence = 3" > /etc/security/pwquality.conf.d/50-pwmaxsequence.conf
+  log_message "5.3.3.2.5 Set maxsequence = 3 in 50-pwmaxsequence.conf"
+
+  # Remove maxsequence= from pam_pwquality.so lines in PAM profiles
+  grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?maxsequence\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+maxsequence=[0-9]+/\\1/' \"$file\"" "5.3.3.2.5 Remove maxsequence= from $file"
+  done
+
+  log_message "5.3.3.2.5 Success: Password sequential character limit (maxsequence) configured to 3"
+
+  # =====================[ SECTION 5.3.3.2.6: Ensure password dictionary check is enabled ]=====================
+  start_section "5.3.3.2.6"
+  
+  # Comment out dictcheck = 0 in pwquality.conf
+  if [[ -f /etc/security/pwquality.conf ]]; then
+    run_command "sed -ri 's/^\\s*dictcheck\\s*=\\s*0/# &/' /etc/security/pwquality.conf" "5.3.3.2.6 [✓] Commented out dictcheck = 0 in pwquality.conf"
+  fi
+  
+  # Comment out dictcheck = 0 in all pwquality.conf.d/*.conf files
+  find /etc/security/pwquality.conf.d/ -type f -name '*.conf' 2>/dev/null | while read -r conf_file; do
+    run_command "sed -ri 's/^\\s*dictcheck\\s*=\\s*0/# &/' \"$conf_file\"" "5.3.3.2.6 [✓] Commented out dictcheck = 0 in $conf_file"
+  done
+  
+  # Remove dictcheck= from pam_pwquality.so lines in PAM profiles
+  grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?dictcheck\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+dictcheck=[0-9]+/\\1/' \"$file\"" "5.3.3.2.6 [✓] Removed dictcheck= from $file"
+  done
+  
+  log_message "5.3.3.2.6 [✓] Success: Dictionary check enabled for password quality"
+
+
+  # =====================[ SECTION 5.3.3.2.7: Ensure password quality checking is enforced ]=====================
+  start_section "5.3.3.2.7"
+  
+  # Comment out enforcing = 0 in pwquality.conf
+  if [[ -f /etc/security/pwquality.conf ]]; then
+    run_command "sed -ri 's/^\\s*enforcing\\s*=\\s*0/# &/' /etc/security/pwquality.conf" "5.3.3.2.7 [✓] Commented out enforcing = 0 in pwquality.conf"
+  fi
+  
+  # Comment out enforcing = 0 in all pwquality.conf.d/*.conf files
+  find /etc/security/pwquality.conf.d/ -type f -name '*.conf' 2>/dev/null | while read -r conf_file; do
+    run_command "sed -ri 's/^\\s*enforcing\\s*=\\s*0/# &/' \"$conf_file\"" "5.3.3.2.7 [✓] Commented out enforcing = 0 in $conf_file"
+  done
+  
+  # Remove enforcing=0 from pam_pwquality.so lines in PAM profiles
+  grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?enforcing=0\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+enforcing=0/\\1/' \"$file\"" "5.3.3.2.7 [✓] Removed enforcing=0 from $file"
+  done
+  
+  log_message "5.3.3.2.7 [✓] Success: Password quality enforcement enabled"
+
+
+  # =====================[ SECTION 5.3.3.2.8: Ensure password quality is enforced for root user ]=====================
+  start_section "5.3.3.2.8"
+  
+  # Create pwquality.conf.d directory if missing
+  if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
+    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.8 [✓] Created pwquality.conf.d directory"
+  fi
+  
+  # Create or overwrite enforce_for_root setting in custom conf file
+  echo "enforce_for_root" > /etc/security/pwquality.conf.d/50-pwroot.conf
+  log_message "5.3.3.2.8 [✓] Set enforce_for_root in 50-pwroot.conf"
+  
+  log_message "5.3.3.2.8 [✓] Success: Password quality enforcement enabled for root user"
+
+
+
+  # =====================[ SECTION 5.3.3.3.1: Ensure password history is configured ]=====================
+  start_section "5.3.3.3.1"
+  
+  # Identify PAM profiles using pam_pwhistory.so in Password section
+  awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_pwhistory\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
+    # Ensure remember=24 is present
+    if grep -q 'pam_pwhistory\.so' "$file"; then
+      if grep -q 'pam_pwhistory\.so.*remember=' "$file"; then
+        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)remember=[0-9]+/\1remember=24/' \"$file\"" "5.3.3.3.1 [✓] Updated remember=24 in $file"
+      else
+        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 remember=24/' \"$file\"" "5.3.3.3.1 [✓] Added remember=24 to $file"
+      fi
+  
+      # Extract profile name from file name
+      PROFILE_NAME=$(basename "$file")
+      run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.3.1 [✓] Re-enabled PAM profile $PROFILE_NAME"
+    fi
+  done
+  
+  log_message "5.3.3.3.1 [✓] Success: Password history configured with remember=24"
+
+  # =====================[ SECTION 5.3.3.3.2: Ensure password history is enforced for root user ]=====================
+  start_section "5.3.3.3.2"
+  
+  # Identify PAM profiles using pam_pwhistory.so in Password section
+  awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_pwhistory\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
+    # Ensure enforce_for_root is present
+    if grep -q 'pam_pwhistory\.so' "$file"; then
+      if grep -q 'pam_pwhistory\.so.*enforce_for_root' "$file"; then
+        log_message "5.3.3.3.2 [ℹ] enforce_for_root already present in $file"
+      else
+        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 enforce_for_root/' \"$file\"" "5.3.3.3.2 [✓] Added enforce_for_root to $file"
+      fi
+  
+      # Extract profile name from file name
+      PROFILE_NAME=$(basename "$file")
+      run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.3.2 [✓] Re-enabled PAM profile $PROFILE_NAME"
+    fi
+  done
+  
+  log_message "5.3.3.3.2 [✓] Success: Password history enforcement enabled for root user"
+
+
+  # =====================[ SECTION 5.3.3.3.3: Ensure pam_pwhistory includes use_authtok ]=====================
+  start_section "5.3.3.3.3"
+  
+  # Identify PAM profiles using pam_pwhistory.so in Password section
+  awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_pwhistory\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
+    # Ensure use_authtok is present
+    if grep -q 'pam_pwhistory\.so' "$file"; then
+      if grep -q 'pam_pwhistory\.so.*use_authtok' "$file"; then
+        log_message "5.3.3.3.3 [ℹ] use_authtok already present in $file"
+      else
+        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 use_authtok/' \"$file\"" "5.3.3.3.3 [✓] Added use_authtok to $file"
+      fi
+  
+      # Extract profile name from file name
+      PROFILE_NAME=$(basename "$file")
+      run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.3.3 [✓] Re-enabled PAM profile $PROFILE_NAME"
+    fi
+  done
+  
+  log_message "5.3.3.3.3 [✓] Success: pam_pwhistory includes use_authtok"
+
+
+  # =====================[ SECTION 5.3.3.4.1: Ensure pam_unix does not include nullok ]=====================
+  start_section "5.3.3.4.1"
+  
+  # Find PAM profiles with pam_unix.so containing nullok
+  grep -PH -- '^\h*([^#\n\r]+\h+)?pam_unix\.so\h+([^#\n\r]+\h+)?nullok\b' /usr/share/pam-configs/* 2>/dev/null | cut -d: -f1 | sort -u | while read -r file; do
+    # Remove nullok from pam_unix.so lines
+    run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)\\s+nullok/\\1/' \"$file\"" "5.3.3.4.1 [✓] Removed nullok from $file"
+  
+    # Extract profile name from file name
+    PROFILE_NAME=$(basename "$file")
+    run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.1 [✓] Re-enabled PAM profile $PROFILE_NAME"
+  done
+  
+  log_message "5.3.3.4.1 [✓] Success: nullok removed from pam_unix.so lines"
+  
+
+  # =====================[ SECTION 5.3.3.4.2: Ensure pam_unix does not include remember ]=====================
+  start_section "5.3.3.4.2"
+  
+  # Find PAM profiles with pam_unix.so containing remember=
+  grep -PH -- '^\h*([^#\n\r]+\h+)?pam_unix\.so\h+([^#\n\r]+\h+)?remember\b' /usr/share/pam-configs/* 2>/dev/null | cut -d: -f1 | sort -u | while read -r file; do
+    # Remove remember=<N> from pam_unix.so lines
+    run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)\\s+remember=[0-9]+/\\1/' \"$file\"" "5.3.3.4.2 [✓] Removed remember= from $file"
+  
+    # Extract profile name from file name
+    PROFILE_NAME=$(basename "$file")
+    run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.2 [✓] Re-enabled PAM profile $PROFILE_NAME"
+  done
+  
+  log_message "5.3.3.4.2 [✓] Success: remember= removed from pam_unix.so lines"
+
+
+  # =====================[ SECTION 5.3.3.4.3: Ensure pam_unix includes a strong password hashing algorithm ]=====================
+  start_section "5.3.3.4.3"
+  
+  # Identify PAM profiles using pam_unix.so in Password section
+  awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_unix\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
+    # Ensure hashing algorithm is present (yescrypt or sha512)
+    if grep -q 'pam_unix\.so' "$file"; then
+      if grep -Eq 'pam_unix\.so.*(yescrypt|sha512)' "$file"; then
+        log_message "5.3.3.4.3 [ℹ] Strong hashing algorithm already present in $file"
+      else
+        run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)/\1 yescrypt/' \"$file\"" "5.3.3.4.3 [✓] Added yescrypt to $file"
+      fi
+  
+      # Extract profile name from file name
+      PROFILE_NAME=$(basename "$file")
+      run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.3 [✓] Re-enabled PAM profile $PROFILE_NAME"
+    fi
+  done
+  
+  log_message "5.3.3.4.3 [✓] Success: pam_unix configured with strong password hashing algorithm"
+  
+
+  # =====================[ SECTION 5.3.3.4.4: Ensure pam_unix includes use_authtok in Password section only ]=====================
+  start_section "5.3.3.4.4"
+  
+  # Identify PAM profiles using pam_unix.so in Password section
+  awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_unix\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
+    # Process Password section only
+    awk '
+      BEGIN { in_password = 0 }
+      /^Password-Type:/ { in_password = 1; next }
+      /^Password-Initial:/ { in_password = 0 }
+      /^-Type:/ { in_password = 0 }
+      {
+        if (in_password && /pam_unix\.so/ && !/use_authtok/) {
+          sub(/pam_unix\.so/, "pam_unix.so use_authtok")
+        }
+        print
+      }
+    ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+    log_message "5.3.3.4.4 [✓] Updated $file to include use_authtok in Password section"
+  
+    # Extract profile name from file name
+    PROFILE_NAME=$(basename "$file")
+    run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.4 [✓] Re-enabled PAM profile $PROFILE_NAME"
+  done
+  
+  log_message "5.3.3.4.4 [✓] Success: pam_unix includes use_authtok in Password section only"
+
+
+  # Install all required PAM modules
+  apt update
+  apt install --reinstall -y \
+    libpam0g \
+    libpam-modules \
+    libpam-modules-bin \
+    libpam-runtime \
+    libpam-pwquality \
+    libpam-tmpdir \
+    libpam-fprintd
+  
+  # Reconfigure PAM profiles
+  pam-auth-update --force
+  
+  # Confirm pam_unix.so is present
+  grep pam_unix.so /etc/pam.d/common-password || echo "Missing pam_unix.so — passwd will fail"
+  
+  # Now run the password test
+  useradd -m testuser_5311
+  echo "testuser_5311:TempPass123!" | chpasswd
+  echo -e "TempPass123!\nNewPass123!\nNewPass123!" | passwd testuser_5311 > /tmp/passwd_test.log 2>&1
+
+fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
+  # =====================[ SECTION 5.4.1.1: Ensure password expiration is configured ]=====================
+  start_section "5.4.1.1"
+  
+  # Set PASS_MAX_DAYS in /etc/login.defs
+  run_command "sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 365/' /etc/login.defs" "5.4.1.1 Set PASS_MAX_DAYS to 365 in login.defs"
+  run_command "grep -q '^PASS_MAX_DAYS' /etc/login.defs || echo 'PASS_MAX_DAYS 365' >> /etc/login.defs" "5.4.1.1 Ensure PASS_MAX_DAYS is present in login.defs"
+  
+  # Update max password age for all users with valid password hashes
+  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$5 > 365 || \$5 < 1) system(\"chage --maxdays 365 \" \$1)}' /etc/shadow" "5.4.1.1 Set max password age to 365 for users"
+  
+  # Set last password change date for users missing it (e.g., root after kickstart)
+  run_command 'for user in $(awk -F: '\''($2~/^\$.+\$/) && ($3 == 0 || $1 == "root") {print $1}'\'' /etc/shadow); do chage -d "$(date +%Y-%m-%d)" "$user"; done' "5.4.1.1 Set last password change date for root and UID 0 users"
+  
+  # =====================[ SECTION 5.4.1.2: Ensure minimum password days is configured ]=====================
+  start_section "5.4.1.2"
+  
+  # Set PASS_MIN_DAYS in /etc/login.defs
+  run_command "sed -i 's/^PASS_MIN_DAYS.*/PASS_MIN_DAYS 1/' /etc/login.defs" "5.4.1.2 Set PASS_MIN_DAYS to 1 in login.defs"
+  run_command "grep -q '^PASS_MIN_DAYS' /etc/login.defs || echo 'PASS_MIN_DAYS 1' >> /etc/login.defs" "5.4.1.2 Ensure PASS_MIN_DAYS is present in login.defs"
+  
+  # Modify user parameters for all users with password hashes and mindays < 1
+  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$4 < 1) system(\"chage --mindays 1 \" \$1)}' /etc/shadow" "5.4.1.2 Set minimum password age to 1 for all users"
+  
+  # =====================[ SECTION 5.4.1.3: Ensure password expiration warning days is configured ]=====================
+  start_section "5.4.1.3"
+  
+  # Set PASS_WARN_AGE in /etc/login.defs
+  run_command "sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE 7/' /etc/login.defs" "5.4.1.3 Set PASS_WARN_AGE to 7 in login.defs"
+  run_command "grep -q '^PASS_WARN_AGE' /etc/login.defs || echo 'PASS_WARN_AGE 7' >> /etc/login.defs" "5.4.1.3 Ensure PASS_WARN_AGE is present in login.defs"
+  
+  # Modify user parameters for all users with password hashes and warndays < 7
+  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$6 < 7) system(\"chage --warndays 7 \" \$1)}' /etc/shadow" "5.4.1.3 Set password expiration warning to 7 days for all users"
+  
+  # =====================[ SECTION 5.4.1.4: Ensure strong password hashing algorithm is configured ]=====================
+  start_section "5.4.1.4"
+  
+  # Set ENCRYPT_METHOD to YESCRYPT in /etc/login.defs
+  run_command "sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD YESCRYPT/' /etc/login.defs" "5.4.1.4 Set ENCRYPT_METHOD to YESCRYPT in login.defs"
+  run_command "grep -q '^ENCRYPT_METHOD' /etc/login.defs || echo 'ENCRYPT_METHOD YESCRYPT' >> /etc/login.defs" "5.4.1.4 Ensure ENCRYPT_METHOD is present in login.defs"
+  
+  # =====================[ SECTION 5.4.1.5: Ensure inactive password lock is configured ]=====================
+  start_section "5.4.1.5"
+  
+  # Set default inactivity period to 45 days for new users
+  run_command "useradd -D -f 45" "5.4.1.5 Set default inactivity period to 45 days"
+  
+  # Modify user parameters for all users with password hashes and inactive age > 45 or < 0
+  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$7 > 45 || \$7 < 0) system(\"chage --inactive 45 \" \$1)}' /etc/shadow" "5.4.1.5 Enforce 45-day inactivity lock for all users"
+  
+  # =====================[ SECTION 5.4.1.6: Ensure all users last password change date is in the past ]=====================
+  start_section "5.4.1.6"
+  
+  # Identify users with a password change date in the future and reset it to today
+  run_command "awk -F: -v today=\$(date +%s) '(\$2~/^\\$.+\\$/) && (\$3 > 0) {cmd=\"date -d \\\"1970-01-01 +\" \$3 \" days\\\" +%s\"; cmd | getline pwd_date; close(cmd); if(pwd_date > today) system(\"chage -d \\\"\\\$(date +%Y-%m-%d)\\\" \" \$1)}' /etc/shadow" "5.4.1.6 Reset future password change dates to today"
+  
+  # =====================[ SECTION 5.4.2.1: Ensure root is the only UID 0 account ]=====================
+  start_section "5.4.2.1"
+  
+  # Ensure root has UID 0
+  run_command "usermod -u 0 root" "5.4.2.1 Set UID 0 for root account"
+  
+  # Identify and modify any other accounts with UID 0
+  run_command "awk -F: '(\$3 == 0 && \$1 != \"root\") {print \$1}' /etc/passwd | while read user; do new_uid=\$(shuf -i 1001-1999 -n 1); usermod -u \$new_uid \$user; done" "5.4.2.1 Reassign UID for non-root UID 0 accounts"
+
+  # =====================[ SECTION 5.4.2.2: Ensure root is the only GID 0 account ]=====================
+  start_section "5.4.2.2"
+  
+  # Ensure root user's GID is 0
+  run_command "usermod -g 0 root" "5.4.2.2 Set root user's GID to 0"
+  
+  # Ensure root group's GID is 0
+  run_command "groupmod -g 0 root" "5.4.2.2 Set root group's GID to 0"
+  
+  # Identify and modify any other users with GID 0
+  run_command "awk -F: '(\$4 == 0 && \$1 != \"root\") {print \$1}' /etc/passwd | while read user; do new_gid=\$(shuf -i 1001-1999 -n 1); usermod -g \$new_gid \$user; done" "5.4.2.2 Reassign GID for non-root GID 0 accounts"
+
+  # =====================[ SECTION 5.4.2.3: Ensure group root is the only GID 0 group ]=====================
+  start_section "5.4.2.3"
+  
+  # Ensure root group has GID 0
+  run_command "groupmod -g 0 root" "5.4.2.3 Set root group's GID to 0"
+  
+  # Identify and modify any other groups with GID 0
+  run_command "awk -F: '(\$3 == 0 && \$1 != \"root\") {print \$1}' /etc/group | while read grp; do new_gid=\$(shuf -i 1001-1999 -n 1); groupmod -g \$new_gid \$grp; done" "5.4.2.3 Reassign GID for non-root GID 0 groups"
+  
+  # =====================[ SECTION 5.4.2.4: Ensure root account access is controlled ]=====================
+  start_section "5.4.2.4"
+  
+  # Option 1: Set a password for the root user (recommended if root login is permitted)
+  # run_command "passwd root" "5.4.2.4 Set password for root account"
+  
+  # Option 2: Lock the root user account (recommended if root login is disabled)
+   run_command "usermod -L root" "5.4.2.4 Lock root account"
+   
+  # =====================[ SECTION 5.4.2.5: Ensure root path integrity ]=====================
+  start_section "5.4.2.5"
+  
+  # Check and sanitize entries in root's PATH
+  run_command 'for dir in $(echo $PATH | tr ":" "\n"); do \
+    if [[ -z "$dir" ]]; then \
+      echo "Empty PATH entry (::) detected"; \
+    elif [[ "$dir" == "." ]]; then \
+      echo "Current directory (.) in PATH — remove for security"; \
+    elif [[ ! -d "$dir" ]]; then \
+      echo "Non-directory PATH entry: $dir"; \
+    elif [[ $(stat -c %U "$dir") != "root" ]]; then \
+      echo "Non-root owned directory in PATH: $dir"; \
+    elif [[ $(stat -c %a "$dir") -gt 755 ]]; then \
+      echo "Directory $dir has permissions more permissive than 0755"; \
+    fi; \
+  done' "5.4.2.5 Audit root PATH integrity"
+
+  # =====================[ SECTION 5.4.2.6: Ensure root user umask is configured ]=====================
+  start_section "5.4.2.6"
+  
+  # Update umask in /root/.bash_profile to 0027 or more restrictive
+  run_command "sed -i '/^umask /s/umask .*/umask 0027/' /root/.bash_profile" "5.4.2.6 Set umask to 0027 in /root/.bash_profile"
+  run_command "grep -q '^umask' /root/.bash_profile || echo 'umask 0027' >> /root/.bash_profile" "5.4.2.6 Ensure umask is present in /root/.bash_profile"
+  
+  # Update umask in /root/.bashrc to 0027 or more restrictive
+  run_command "sed -i '/^umask /s/umask .*/umask 0027/' /root/.bashrc" "5.4.2.6 Set umask to 0027 in /root/.bashrc"
+  run_command "grep -q '^umask' /root/.bashrc || echo 'umask 0027' >> /root/.bashrc" "5.4.2.6 Ensure umask is present in /root/.bashrc"
+  
+  # =====================[ SECTION 5.4.2.7: Ensure system accounts do not have a valid login shell ]=====================
+  start_section "5.4.2.7"
+  
+  # Set shell to nologin for system accounts with valid login shells
+  run_command 'UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs); \
+  valid_shells="^($(awk -F/ '\''$NF != \"nologin\" {print}'\'' /etc/shells | sed -r "/^\//{s,/,\\\\/,g;p}" | paste -s -d "|" -))\$"; \
+  awk -v pat="$valid_shells" -v uid_min="$UID_MIN" -F: '\''($1!~/^(root|halt|sync|shutdown|nfsnobody)$/ && ($3 < uid_min || $3 == 65534) && $(NF) ~ pat) \
+  {system("usermod -s $(command -v nologin) " $1)}'\'' /etc/passwd' "5.4.2.7 Set shell to nologin for system accounts"
+
+  # =====================[ SECTION 5.4.2.8: Ensure accounts without a valid login shell are locked ]=====================
+  start_section "5.4.2.8"
+  
+  # Lock non-root accounts that do not have a valid login shell
+  run_command 'valid_shells="^($(awk -F/ '\''$NF != \"nologin\" {print}'\'' /etc/shells | sed -r '\''/^\//{s,/,\\\\/,g;p}'\'' | paste -s -d "|" -))\$"; \
+  awk -v pat="$valid_shells" -F: '\''($1 != "root" && $(NF) !~ pat) {print $1}'\'' /etc/passwd | while read user; do \
+  passwd -S "$user" | awk '\''$2 !~ /^L/ {system("usermod -L " $1)}'\''; done' "5.4.2.8 Lock non-root accounts without valid login shell"
+  
+  # =====================[ SECTION 5.4.3.1: Ensure nologin is not listed in /etc/shells ]=====================
+  start_section "5.4.3.1"
+  
+  # Remove any lines containing 'nologin' from /etc/shells
+  run_command "sed -i '/nologin/d' /etc/shells" "5.4.3.1 Remove nologin entries from /etc/shells"
+
+  # =====================[ SECTION 5.4.3.2: Ensure default user shell timeout is configured ]=====================
+  start_section "5.4.3.2"
+  
+  # Remove any existing TMOUT lines and append secure configuration to /etc/profile
+  run_command "sed -i '/TMOUT=/d' /etc/profile && echo -e '\nTMOUT=900\nreadonly TMOUT\nexport TMOUT' >> /etc/profile" "5.4.3.2 Set TMOUT to 900 in /etc/profile"
+  
+  # Remove any existing TMOUT lines and append secure configuration to /etc/bashrc
+  run_command "sed -i '/TMOUT=/d' /etc/bashrc && echo -e '\nTMOUT=900\nreadonly TMOUT\nexport TMOUT' >> /etc/bashrc" "5.4.3.2 Set TMOUT to 900 in /etc/bashrc"
+  
+  # Remove any existing TMOUT lines and append secure configuration to all *.sh files in /etc/profile.d
+  run_command "find /etc/profile.d/ -type f -name '*.sh' -exec sed -i '/TMOUT=/d' {} + -exec bash -c 'echo -e \"\\nTMOUT=900\\nreadonly TMOUT\\nexport TMOUT\" >> {}' \\;" "5.4.3.2 Set TMOUT to 900 in /etc/profile.d/*.sh"
+  
+  # =====================[ SECTION 5.4.3.3: Ensure default user umask is configured ]=====================
+  start_section "5.4.3.3"
+  
+  # Set default umask to 027 system-wide via profile.d
+  run_command "printf '%s\\n' 'umask 027' > /etc/profile.d/50-systemwide_umask.sh" "5.4.3.3 Create system-wide umask config file"
+  
+  # Make umask readonly and exported
+  run_command "echo 'readonly umask' >> /etc/profile.d/50-systemwide_umask.sh" "5.4.3.3 Make umask readonly"
+  run_command "echo 'export umask' >> /etc/profile.d/50-systemwide_umask.sh" "5.4.3.3 Export umask setting"
+  
+  # Comment out weaker umask settings in system-wide config files
+  run_command "sed -i '/^[[:space:]]*umask[[:space:]]\+[0-9]\{3\}/s/^/#/' /etc/profile /etc/bashrc /etc/bash.bashrc /etc/login.defs /etc/default/login" "5.4.3.3 Comment out weaker umask settings in system files"
+  
+  # Comment out weaker umask settings in profile.d scripts
+  run_command "find /etc/profile.d/ -type f -name '*.sh' -exec sed -i '/^[[:space:]]*umask [0-9][0-9][0-9]/s/^/#/' {} +" "5.4.3.3 Comment out weaker umask settings in profile.d scripts"
+
+fi
 
 
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
