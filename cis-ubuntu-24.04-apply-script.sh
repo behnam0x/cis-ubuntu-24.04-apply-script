@@ -3543,18 +3543,775 @@ fi
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1.1" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" ]]; then
 
   # =====================[ SECTION 6.2.1.1: Ensure auditd packages are installed ]=====================
   start_section "6.2.1.1"
 
   run_command "apt install -y auditd audispd-plugins" "6.2.1.1 Install auditd and audispd-plugins"
   
-  
+  # =====================[ SECTION 6.2.1.2: Ensure auditd service is enabled and active ]=====================
+  start_section "6.2.1.2"
+
+  run_command "systemctl unmask auditd" "6.2.1.2 Unmask auditd service"
+  run_command "systemctl enable auditd" "6.2.1.2 Enable auditd service"
+  run_command "systemctl start auditd" "6.2.1.2 Start auditd service"
+
+
+  # =====================[ SECTION 6.2.1.3: Ensure auditing for early processes is enabled ]=====================
+  start_section "6.2.1.3"
+
+  # Add audit=1 to GRUB_CMDLINE_LINUX if not already present
+  run_command "
+if ! grep -q 'audit=1' /etc/default/grub; then
+  sed -i 's/^\(GRUB_CMDLINE_LINUX=\".*\)\"/\1 audit=1\"/' /etc/default/grub
+fi
+" "6.2.1.3 Add audit=1 to GRUB_CMDLINE_LINUX"
+
+  # Update GRUB configuration
+  run_command "update-grub" "6.2.1.3 Apply GRUB configuration changes"
+
+
+  # =====================[ SECTION 6.2.1.4: Ensure audit_backlog_limit is sufficient ]=====================
+  start_section "6.2.1.4"
+
+  # Add audit_backlog_limit=8192 to GRUB_CMDLINE_LINUX if not already present
+  run_command "
+if ! grep -q 'audit_backlog_limit=' /etc/default/grub; then
+  sed -i 's/^\(GRUB_CMDLINE_LINUX=\".*\)\"/\1 audit_backlog_limit=8192\"/' /etc/default/grub
+elif ! grep -q 'audit_backlog_limit=8192' /etc/default/grub; then
+  sed -i 's/audit_backlog_limit=[0-9]\\+/audit_backlog_limit=8192/' /etc/default/grub
+fi
+" "6.2.1.4 Ensure audit_backlog_limit=8192 is set in GRUB"
+
+  # Update GRUB configuration
+  run_command "update-grub" "6.2.1.4 Apply GRUB configuration changes"
+
+
+fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.2" ]]; then
+
+  # =====================[ SECTION 6.2.2.1: Ensure audit log storage size is configured ]=====================
+  start_section "6.2.2.1"
+
+  # Set max_log_file to 8 MB or higher in /etc/audit/auditd.conf
+  run_command '
+if grep -q "^max_log_file" /etc/audit/auditd.conf; then
+  sed -i "s/^max_log_file.*/max_log_file = 8/" /etc/audit/auditd.conf
+else
+  echo "max_log_file = 8" >> /etc/audit/auditd.conf
+fi
+' "6.2.2.1 Set max_log_file = 8 in auditd.conf"
+
+
+  # =====================[ SECTION 6.2.2.2: Ensure audit logs are not automatically deleted ]=====================
+  start_section "6.2.2.2"
+
+  # Set max_log_file_action to keep_logs in /etc/audit/auditd.conf
+  run_command '
+if grep -q "^max_log_file_action" /etc/audit/auditd.conf; then
+  sed -i "s/^max_log_file_action.*/max_log_file_action = keep_logs/" /etc/audit/auditd.conf
+else
+  echo "max_log_file_action = keep_logs" >> /etc/audit/auditd.conf
+fi
+' "6.2.2.2 Set max_log_file_action = keep_logs in auditd.conf"
+
+
+  # =====================[ SECTION 6.2.2.3: Ensure system is disabled when audit logs are full ]=====================
+  start_section "6.2.2.3"
+
+  # Set disk_full_action and disk_error_action in /etc/audit/auditd.conf
+  run_command '
+if grep -q "^disk_full_action" /etc/audit/auditd.conf; then
+  sed -i "s/^disk_full_action.*/disk_full_action = halt/" /etc/audit/auditd.conf
+else
+  echo "disk_full_action = halt" >> /etc/audit/auditd.conf
+fi
+
+if grep -q "^disk_error_action" /etc/audit/auditd.conf; then
+  sed -i "s/^disk_error_action.*/disk_error_action = halt/" /etc/audit/auditd.conf
+else
+  echo "disk_error_action = halt" >> /etc/audit/auditd.conf
+fi
+' "6.2.2.3 Set disk_full_action and disk_error_action to halt in auditd.conf"
+
+
+  # =====================[ SECTION 6.2.2.4: Ensure system warns when audit logs are low on space ]=====================
+  start_section "6.2.2.4"
+
+  # Set space_left_action and admin_space_left_action in /etc/audit/auditd.conf
+  run_command '
+if grep -q "^space_left_action" /etc/audit/auditd.conf; then
+  sed -i "s/^space_left_action.*/space_left_action = email/" /etc/audit/auditd.conf
+else
+  echo "space_left_action = email" >> /etc/audit/auditd.conf
+fi
+
+if grep -q "^admin_space_left_action" /etc/audit/auditd.conf; then
+  sed -i "s/^admin_space_left_action.*/admin_space_left_action = single/" /etc/audit/auditd.conf
+else
+  echo "admin_space_left_action = single" >> /etc/audit/auditd.conf
+fi
+' "6.2.2.4 Set space_left_action=email and admin_space_left_action=single in auditd.conf"
 
 fi
 ########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.3" ]]; then
 
+  # =====================[ SECTION 6.2.3.1: Ensure sudoers changes are audited ]=====================
+  start_section "6.2.3.1"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-scope.rules"
+
+  run_command '
+# Ensure audit rules for sudoers are present and optimized
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if grep -qE "^-w /etc/sudoers" "$AUDIT_RULE_FILE"; then
+  sed -i "s|^-w /etc/sudoers.*|-w /etc/sudoers -p wa -k scope|" "$AUDIT_RULE_FILE"
+else
+  echo "-w /etc/sudoers -p wa -k scope" >> "$AUDIT_RULE_FILE"
+fi
+
+if grep -qE "^-w /etc/sudoers.d" "$AUDIT_RULE_FILE"; then
+  sed -i "s|^-w /etc/sudoers.d.*|-w /etc/sudoers.d -p wa -k scope|" "$AUDIT_RULE_FILE"
+else
+  echo "-w /etc/sudoers.d -p wa -k scope" >> "$AUDIT_RULE_FILE"
+fi
+' "6.2.3.1 Edit or create audit rules for sudoers scope changes"
+
+  run_command "augenrules --load" "6.2.3.1 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.1 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.2: Ensure actions as another user are always logged ]=====================
+  start_section "6.2.3.2"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-user_emulation.rules"
+
+  run_command '
+# Ensure audit rules for user emulation are present and optimized
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "user_emulation" "$AUDIT_RULE_FILE"; then
+  cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b64 -C euid!=uid -F auid!=unset -S execve -k user_emulation
+-a always,exit -F arch=b32 -C euid!=uid -F auid!=unset -S execve -k user_emulation
+EOF
+fi
+' "6.2.3.2 Edit or create audit rules for user emulation"
+
+  run_command "augenrules --load" "6.2.3.2 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.2 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.3: Ensure sudo log file modifications are audited ]=====================
+  start_section "6.2.3.3"
+
+  run_command '
+SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* 2>/dev/null | sed -e "s/.*logfile=//;s/,.*//" -e "s/\"//g")
+
+if [ -n "$SUDO_LOG_FILE" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-sudo.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if grep -q "$SUDO_LOG_FILE" "$AUDIT_RULE_FILE"; then
+    sed -i "s|.*$SUDO_LOG_FILE.*|-w $SUDO_LOG_FILE -p wa -k sudo_log_file|" "$AUDIT_RULE_FILE"
+  else
+    echo "-w $SUDO_LOG_FILE -p wa -k sudo_log_file" >> "$AUDIT_RULE_FILE"
+  fi
+else
+  echo "ERROR: Variable 'SUDO_LOG_FILE' is unset. Please ensure sudo logging is configured."
+fi
+' "6.2.3.3 Edit or create audit rule for sudo log file"
+
+  run_command "augenrules --load" "6.2.3.3 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.3 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.4: Ensure date/time modification events are audited ]=====================
+  start_section "6.2.3.4"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-time-change.rules"
+
+  run_command '
+# Ensure audit rules for time-change events are present and optimized
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "time-change" "$AUDIT_RULE_FILE"; then
+  cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change
+-a always,exit -F arch=b32 -S adjtimex,settimeofday -k time-change
+-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -k time-change
+-a always,exit -F arch=b32 -S clock_settime -F a0=0x0 -k time-change
+-w /etc/localtime -p wa -k time-change
+EOF
+fi
+' "6.2.3.4 Edit or create audit rules for time-change events"
+
+  run_command "augenrules --load" "6.2.3.4 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.4 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.5: Ensure network environment modification events are audited ]=====================
+  start_section "6.2.3.5"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-system_locale.rules"
+
+  run_command '
+# Ensure audit rules for system locale and network environment changes are present and optimized
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "system-locale" "$AUDIT_RULE_FILE"; then
+  cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k system-locale
+-a always,exit -F arch=b32 -S sethostname,setdomainname -k system-locale
+-w /etc/issue -p wa -k system-locale
+-w /etc/issue.net -p wa -k system-locale
+-w /etc/hosts -p wa -k system-locale
+-w /etc/networks -p wa -k system-locale
+-w /etc/network/ -p wa -k system-locale
+-w /etc/netplan/ -p wa -k system-locale
+EOF
+fi
+' "6.2.3.5 Edit or create audit rules for system locale and network changes"
+
+  run_command "augenrules --load" "6.2.3.5 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.5 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.6: Ensure privileged command usage is audited ]=====================
+  start_section "6.2.3.6"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+AUDIT_RULE_FILE="/etc/audit/rules.d/50-privileged.rules"
+NEW_DATA=()
+
+for PARTITION in $(findmnt -n -l -k -it $(awk "/nodev/ { print \$2 }" /proc/filesystems | paste -sd,) | grep -Pv "noexec|nosuid" | awk "{print \$1}"); do
+  readarray -t DATA < <(find "${PARTITION}" -xdev -perm /6000 -type f | awk -v UID_MIN=${UID_MIN} "{print \"-a always,exit -F path=\" \$1 \" -F perm=x -F auid>=\" UID_MIN \" -F auid!=unset -k privileged\"}")
+  for ENTRY in "${DATA[@]}"; do
+    NEW_DATA+=("${ENTRY}")
+  done
+done
+
+readarray &> /dev/null -t OLD_DATA < "${AUDIT_RULE_FILE}"
+COMBINED_DATA=( "${OLD_DATA[@]}" "${NEW_DATA[@]}" )
+printf "%s\n" "${COMBINED_DATA[@]}" | sort -u > "${AUDIT_RULE_FILE}"
+' "6.2.3.6 Discover and write audit rules for privileged commands"
+
+  run_command "augenrules --load" "6.2.3.6 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.6 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.7: Ensure unsuccessful file access attempts are audited ]=====================
+  start_section "6.2.3.7"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-access.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "access" "$AUDIT_RULE_FILE"; then
+    cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=$UID_MIN -F auid!=unset -k access
+-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=$UID_MIN -F auid!=unset -k access
+-a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=$UID_MIN -F auid!=unset -k access
+-a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=$UID_MIN -F auid!=unset -k access
+EOF
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.7 Edit or create audit rules for unsuccessful file access attempts"
+
+  run_command "augenrules --load" "6.2.3.7 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.7 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.8: Ensure identity modification events are audited ]=====================
+  start_section "6.2.3.8"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-identity.rules"
+
+  run_command '
+# Ensure audit rules for identity-related file changes are present
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "identity" "$AUDIT_RULE_FILE"; then
+  cat >> "$AUDIT_RULE_FILE" <<EOF
+-w /etc/group -p wa -k identity
+-w /etc/passwd -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/security/opasswd -p wa -k identity
+-w /etc/nsswitch.conf -p wa -k identity
+-w /etc/pam.conf -p wa -k identity
+-w /etc/pam.d -p wa -k identity
+EOF
+fi
+' "6.2.3.8 Edit or create audit rules for identity-related file changes"
+
+  run_command "augenrules --load" "6.2.3.8 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.8 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.9: Ensure permission modification events are audited ]=====================
+  start_section "6.2.3.9"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-perm_mod.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "perm_mod" "$AUDIT_RULE_FILE"; then
+    cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat -F auid>=$UID_MIN -F auid!=unset -k perm_mod
+-a always,exit -F arch=b64 -S chown,fchown,lchown,fchownat -F auid>=$UID_MIN -F auid!=unset -k perm_mod
+-a always,exit -F arch=b32 -S chmod,fchmod,fchmodat -F auid>=$UID_MIN -F auid!=unset -k perm_mod
+-a always,exit -F arch=b32 -S lchown,fchown,chown,fchownat -F auid>=$UID_MIN -F auid!=unset -k perm_mod
+-a always,exit -F arch=b64 -S setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -F auid>=$UID_MIN -F auid!=unset -k perm_mod
+-a always,exit -F arch=b32 -S setxattr,lsetxattr,fsetxattr,removexattr,lremovexattr,fremovexattr -F auid>=$UID_MIN -F auid!=unset -k perm_mod
+EOF
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.9 Edit or create audit rules for permission modification events"
+
+  run_command "augenrules --load" "6.2.3.9 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.9 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.10: Ensure successful file system mounts are audited ]=====================
+  start_section "6.2.3.10"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-mounts.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "mounts" "$AUDIT_RULE_FILE"; then
+    cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b32 -S mount -F auid>=$UID_MIN -F auid!=unset -k mounts
+-a always,exit -F arch=b64 -S mount -F auid>=$UID_MIN -F auid!=unset -k mounts
+EOF
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.10 Edit or create audit rules for successful mount events"
+
+  run_command "augenrules --load" "6.2.3.10 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.10 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.11: Ensure session initiation events are audited ]=====================
+  start_section "6.2.3.11"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-session.rules"
+
+  run_command '
+# Ensure audit rules for session initiation files are present
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "session" "$AUDIT_RULE_FILE"; then
+  cat >> "$AUDIT_RULE_FILE" <<EOF
+-w /var/run/utmp -p wa -k session
+-w /var/log/wtmp -p wa -k session
+-w /var/log/btmp -p wa -k session
+EOF
+fi
+' "6.2.3.11 Edit or create audit rules for session initiation files"
+
+  run_command "augenrules --load" "6.2.3.11 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.11 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.12: Ensure login and logout events are audited ]=====================
+  start_section "6.2.3.12"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-login.rules"
+
+  run_command '
+# Ensure audit rules for login/logout tracking files are present
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "logins" "$AUDIT_RULE_FILE"; then
+  cat >> "$AUDIT_RULE_FILE" <<EOF
+-w /var/log/lastlog -p wa -k logins
+-w /var/run/faillock -p wa -k logins
+EOF
+fi
+' "6.2.3.12 Edit or create audit rules for login/logout tracking files"
+
+  run_command "augenrules --load" "6.2.3.12 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.12 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.13: Ensure file deletion events are audited ]=====================
+  start_section "6.2.3.13"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-delete.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "delete" "$AUDIT_RULE_FILE"; then
+    cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b64 -S rename,unlink,unlinkat,renameat -F auid>=$UID_MIN -F auid!=unset -k delete
+-a always,exit -F arch=b32 -S rename,unlink,unlinkat,renameat -F auid>=$UID_MIN -F auid!=unset -k delete
+EOF
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.13 Edit or create audit rules for file deletion events"
+
+  run_command "augenrules --load" "6.2.3.13 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.13 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.14: Ensure MAC policy modification events are audited ]=====================
+  start_section "6.2.3.14"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-MAC-policy.rules"
+
+  run_command '
+# Ensure audit rules for MAC policy changes are present
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "MAC-policy" "$AUDIT_RULE_FILE"; then
+  cat >> "$AUDIT_RULE_FILE" <<EOF
+-w /etc/apparmor/ -p wa -k MAC-policy
+-w /etc/apparmor.d/ -p wa -k MAC-policy
+EOF
+fi
+' "6.2.3.14 Edit or create audit rules for MAC policy changes"
+
+  run_command "augenrules --load" "6.2.3.14 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.14 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.15: Ensure chcon command usage is audited ]=====================
+  start_section "6.2.3.15"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-perm_chng.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "/usr/bin/chcon" "$AUDIT_RULE_FILE"; then
+    echo "-a always,exit -F path=/usr/bin/chcon -F perm=x -F auid>=$UID_MIN -F auid!=unset -k perm_chng" >> "$AUDIT_RULE_FILE"
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.15 Edit or create audit rule for chcon command usage"
+
+  run_command "augenrules --load" "6.2.3.15 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.15 Check if audit system is locked and warn about reboot requirement"
+
+
+
+  # =====================[ SECTION 6.2.3.16: Ensure setfacl command usage is audited ]=====================
+  start_section "6.2.3.16"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-perm_chng.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "/usr/bin/setfacl" "$AUDIT_RULE_FILE"; then
+    echo "-a always,exit -F path=/usr/bin/setfacl -F perm=x -F auid>=$UID_MIN -F auid!=unset -k perm_chng" >> "$AUDIT_RULE_FILE"
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.16 Edit or create audit rule for setfacl command usage"
+
+  run_command "augenrules --load" "6.2.3.16 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.16 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.17: Ensure chacl command usage is audited ]=====================
+  start_section "6.2.3.17"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-perm_chng.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "/usr/bin/chacl" "$AUDIT_RULE_FILE"; then
+    echo "-a always,exit -F path=/usr/bin/chacl -F perm=x -F auid>=$UID_MIN -F auid!=unset -k perm_chng" >> "$AUDIT_RULE_FILE"
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.17 Edit or create audit rule for chacl command usage"
+
+  run_command "augenrules --load" "6.2.3.17 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.17 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.18: Ensure usermod command usage is audited ]=====================
+  start_section "6.2.3.18"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-usermod.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "/usr/sbin/usermod" "$AUDIT_RULE_FILE"; then
+    echo "-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>=$UID_MIN -F auid!=unset -k usermod" >> "$AUDIT_RULE_FILE"
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.18 Edit or create audit rule for usermod command usage"
+
+  run_command "augenrules --load" "6.2.3.18 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.18 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.19: Ensure kernel module modification events are audited ]=====================
+  start_section "6.2.3.19"
+
+  run_command '
+UID_MIN=$(awk "/^\s*UID_MIN/{print \$2}" /etc/login.defs)
+
+if [ -n "$UID_MIN" ]; then
+  AUDIT_RULE_FILE="/etc/audit/rules.d/50-kernel_modules.rules"
+  if [ ! -f "$AUDIT_RULE_FILE" ]; then
+    touch "$AUDIT_RULE_FILE"
+  fi
+
+  if ! grep -q "kernel_modules" "$AUDIT_RULE_FILE"; then
+    cat >> "$AUDIT_RULE_FILE" <<EOF
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module,create_module,query_module -F auid>=$UID_MIN -F auid!=unset -k kernel_modules
+-a always,exit -F path=/usr/bin/kmod -F perm=x -F auid>=$UID_MIN -F auid!=unset -k kernel_modules
+EOF
+  fi
+else
+  echo "ERROR: Variable 'UID_MIN' is unset. Check /etc/login.defs."
+fi
+' "6.2.3.19 Edit or create audit rules for kernel module operations"
+
+  run_command "augenrules --load" "6.2.3.19 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.19 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.20: Ensure audit configuration is immutable ]=====================
+  start_section "6.2.3.20"
+
+  AUDIT_RULE_FILE="/etc/audit/rules.d/99-finalize.rules"
+
+  run_command '
+# Ensure audit configuration is set to immutable
+if [ ! -f "$AUDIT_RULE_FILE" ]; then
+  touch "$AUDIT_RULE_FILE"
+fi
+
+if ! grep -q "^-e 2" "$AUDIT_RULE_FILE"; then
+  echo "-e 2" >> "$AUDIT_RULE_FILE"
+fi
+' "6.2.3.20 Edit or create audit rule to make configuration immutable"
+
+  run_command "augenrules --load" "6.2.3.20 Load audit rules into active configuration"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.20 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.21: Ensure audit configuration is synchronized ]=====================
+  start_section "6.2.3.21"
+
+  run_command "augenrules --load" "6.2.3.21 Merge and load audit rules from disk"
+
+  run_command '
+if [[ $(auditctl -s | grep "enabled") =~ "2" ]]; then
+  echo "⚠️ Audit system is locked (enabled 2). Reboot required to apply new audit rules."
+fi
+' "6.2.3.21 Check if audit system is locked and warn about reboot requirement"
+
+
+  # =====================[ SECTION 6.2.3.final: Cleanup duplicate audit rules and reload ]=====================
+  start_section "6.2.3.final"
+
+  run_command '
+# Comment out duplicate rules in /etc/audit/audit.rules (e.g., repeated -w /usr/bin and execve)
+for i in $(grep -nE "^-w /usr/bin/ -p x -k processes$" /etc/audit/audit.rules | cut -d: -f1 | tail -n +2); do
+  sed -i "${i}s/^/#/" /etc/audit/audit.rules
+done
+
+for i in $(grep -nE "^-a always,exit -F arch=b64 -S execve -k processes$" /etc/audit/audit.rules | cut -d: -f1 | tail -n +2); do
+  sed -i "${i}s/^/#/" /etc/audit/audit.rules
+done
+' "6.2.3.final Comment out duplicate audit rules"
+
+  run_command "auditctl -R /etc/audit/audit.rules" "6.2.3.final Reload cleaned audit rules"
+
+  run_command "auditctl -l" "6.2.3.final Show active audit rules"
+
+fi
+########################################################################################
 
 
 
