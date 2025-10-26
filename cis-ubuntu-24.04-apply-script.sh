@@ -319,35 +319,38 @@ fi
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.4" ]]; then
- # =====================[ SECTION 1.4.1: Ensure bootloader password is set ]=====================
- start_section "1.4.1"
- 
- # === Replace these values with your actual username and encrypted password ===
- GRUB_USER="adminuser"
- GRUB_PASSWORD_HASH="grub.pbkdf2.sha512.10000.XXXXXXXXXXXXXXXX"
- 
- # Create custom GRUB config file for password protection
- CUSTOM_GRUB_FILE="/etc/grub.d/01_password"
- 
- run_command "echo 'exec tail -n +2 \$0' > $CUSTOM_GRUB_FILE" "1.4.1 Create GRUB password config header"
- run_command "echo 'set superusers=\"$GRUB_USER\"' >> $CUSTOM_GRUB_FILE" "1.4.1 Set GRUB superuser"
- run_command "echo 'password_pbkdf2 $GRUB_USER $GRUB_PASSWORD_HASH' >> $CUSTOM_GRUB_FILE" "1.4.1 Set GRUB password hash"
- 
- # Ensure boot entry is unrestricted if needed
- run_command "sed -i 's/^CLASS=.*/CLASS=\"--class gnu-linux --class gnu --class os --unrestricted\"/' /etc/grub.d/10_linux" "1.4.1 Add --unrestricted to GRUB boot entry"
- 
- # Update GRUB configuration
- run_command "update-grub" "1.4.1 Apply GRUB configuration changes"
- 
- # =====================[ SECTION 1.4.2: Ensure access to bootloader config is configured ]=====================
- start_section "1.4.2"
- 
- # Set ownership to root:root
- run_command "chown root:root /boot/grub/grub.cfg" "1.4.2 Set ownership of grub.cfg to root:root"
- 
- # Set permissions to remove execute and restrict read/write
- run_command "chmod u-x,go-rwx /boot/grub/grub.cfg" "1.4.2 Set secure permissions on grub.cfg"
+
+  # =====================[ SECTION 1.4.1: Ensure bootloader password is set ]=====================
+  start_section "1.4.1"
+
+  # === Replace these values with your actual username and encrypted password ===
+  GRUB_USER="adminuser"
+  GRUB_PASSWORD_HASH="grub.pbkdf2.sha512.600000.C6179215DBE8C9F03B3A91B42F33F6626CAD6F5E0FB40AFB4E55FA075D96B3B3DB8FC1C7DC78319"
+  CUSTOM_GRUB_FILE="/etc/grub.d/01_password"
+
+  run_command "
+cat > $CUSTOM_GRUB_FILE <<EOF
+#!/bin/sh
+set -e
+cat <<EOP
+exec tail -n +2 \$0
+set superusers=\"$GRUB_USER\"
+password_pbkdf2 $GRUB_USER $GRUB_PASSWORD_HASH
+EOP
+EOF
+" "1.4.1 Create GRUB password script"
+
+  run_command "chmod 700 $CUSTOM_GRUB_FILE" "1.4.1 Set executable permissions on GRUB password script"
+  run_command "update-grub" "1.4.1 Apply GRUB configuration changes"
+
+  # =====================[ SECTION 1.4.2: Ensure access to bootloader config is configured ]=====================
+  start_section "1.4.2"
+
+  run_command "chown root:root /boot/grub/grub.cfg" "1.4.2 Set ownership of grub.cfg to root:root"
+  run_command "chmod 600 /boot/grub/grub.cfg" "1.4.2 Set secure permissions on grub.cfg"
+
 fi
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.5" ]]; then
@@ -3460,6 +3463,99 @@ cat > /etc/logrotate.d/rsyslog <<EOF
 EOF
   ' "6.1.3.8 Configure logrotate for rsyslog logs"
 fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.4" ]]; then
+
+  # =====================[ SECTION 6.1.4.1: Ensure access to all logfiles has been configured ]=====================
+  start_section "6.1.4.1"
+
+  run_command '
+log_paths=("/var/log" "/var/lib" "/var/audit")
+a_output2=()
+
+f_file_test_fix() {
+  a_out2=()
+  maxperm="$(printf "%o" $((0777 & ~$perm_mask)))"
+
+  if [ $((l_mode & perm_mask)) -gt 0 ]; then
+    a_out2+=(" o Mode: \"$l_mode\" should be \"$maxperm\" or more restrictive" " x Removing excess permissions")
+    chmod "$l_rperms" "$l_fname"
+  fi
+
+  if [[ ! "$l_user" =~ $l_auser ]]; then
+    a_out2+=(" o Owned by: \"$l_user\" and should be owned by \"${l_auser//|/ or }\"" " x Changing ownership to: \"$l_fix_account\"")
+    chown "$l_fix_account" "$l_fname"
+  fi
+
+  if [[ ! "$l_group" =~ $l_agroup ]]; then
+    a_out2+=(" o Group owned by: \"$l_group\" and should be group owned by \"${l_agroup//|/ or }\"" " x Changing group ownership to: \"$l_fix_account\"")
+    chgrp "$l_fix_account" "$l_fname"
+  fi
+
+  [ "${#a_out2[@]}" -gt 0 ] && a_output2+=(" - File: \"$l_fname\" is:" "${a_out2[@]}")
+}
+
+l_fix_account="root"
+
+for path in "${log_paths[@]}"; do
+  while IFS= read -r -d $'\0' l_file; do
+    while IFS=: read -r l_fname l_mode l_user l_group; do
+      case "$(basename "$l_fname")" in
+        lastlog* | wtmp* | btmp* | README)
+          perm_mask="0113" l_rperms="ug-x,o-wx" l_auser="root" l_agroup="(root|utmp)"
+          f_file_test_fix ;;
+        cloud-init.log* | localmessages* | waagent.log*)
+          perm_mask="0133" l_rperms="u-x,go-wx" l_auser="(root|syslog)" l_agroup="(root|adm)"
+          f_file_test_fix ;;
+        secure | auth.log | syslog | messages)
+          perm_mask="0137" l_rperms="u-x,g-wx,o-rwx" l_auser="(root|syslog)" l_agroup="(root|adm)"
+          f_file_test_fix ;;
+        SSSD | sssd)
+          perm_mask="0117" l_rperms="ug-x,o-rwx" l_auser="(root|SSSD)" l_agroup="(root|SSSD)"
+          f_file_test_fix ;;
+        gdm | gdm3)
+          perm_mask="0117" l_rperms="ug-x,o-rwx" l_auser="root" l_agroup="(root|gdm|gdm3)"
+          f_file_test_fix ;;
+        *.journal | *.journal~)
+          perm_mask="0137" l_rperms="u-x,g-wx,o-rwx" l_auser="root" l_agroup="(root|systemd-journal)"
+          f_file_test_fix ;;
+        *)
+          perm_mask="0137" l_rperms="u-x,g-wx,o-rwx" l_auser="(root|syslog)" l_agroup="(root|adm)"
+          user_shell="$(awk -F: -v u=\"$l_user\" '\''$1==u {print $7}'\'' /etc/passwd)"
+          if [ "$l_user" = "root" ] || ! grep -Pq -- "^\s*${user_shell}\b" /etc/shells; then
+            ! grep -Pq -- "$l_auser" <<< "$l_user" && l_auser="(root|syslog|$l_user)"
+            ! grep -Pq -- "$l_agroup" <<< "$l_group" && l_agroup="(root|adm|$l_group)"
+          fi
+          f_file_test_fix ;;
+      esac
+    done < <(stat -Lc "%n:%#a:%U:%G" "$l_file")
+  done < <(find -L "$path" -type f \( -perm /0137 -o ! -user root -o ! -group root \) -print0)
+done
+
+if [ "${#a_output2[@]}" -le 0 ]; then
+  printf "\n%s\n" "- All files in log paths have appropriate permissions and ownership" " o No changes required"
+else
+  printf "\n%s\n" "${a_output2[@]}"
+fi
+  ' "6.1.4.1 Audit and fix log file permissions"
+
+fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1.1" ]]; then
+
+  # =====================[ SECTION 6.2.1.1: Ensure auditd packages are installed ]=====================
+  start_section "6.2.1.1"
+
+  run_command "apt install -y auditd audispd-plugins" "6.2.1.1 Install auditd and audispd-plugins"
+  
+  
+
+fi
+########################################################################################
+
+
 
 
 
