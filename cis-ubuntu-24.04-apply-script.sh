@@ -4439,7 +4439,57 @@ chgrp root /sbin/auditctl /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/audi
 ' "6.2.4.10 Ensure audit tools are group-owned by root"
 
 fi
+
 ########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.3" ]]; then
+
+  # =====================[ SECTION 6.3.1: Ensure AIDE is installed and initialized ]=====================
+  start_section "6.3.1"
+
+  run_command "apt install -y aide aide-common" "6.3.1 Install AIDE and aide-common packages"
+
+  run_command "aideinit" "6.3.1 Initialize AIDE database"
+
+  run_command "mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db" "6.3.1 Move initialized AIDE database into place"
+
+
+
+  # =====================[ SECTION 6.3.2: Ensure AIDE integrity checks are scheduled ]=====================
+  start_section "6.3.2"
+
+  run_command '
+systemctl unmask dailyaidecheck.timer dailyaidecheck.service
+' "6.3.2 Unmask dailyaidecheck.timer and dailyaidecheck.service"
+
+  run_command '
+systemctl --now enable dailyaidecheck.timer
+' "6.3.2 Enable and start dailyaidecheck.timer for daily integrity checks"
+
+  run_command '
+if grep -q "/usr/bin/aide" /etc/systemd/system/aidecheck.service; then
+  sed -i "s|/usr/bin/aide|/usr/bin/aide.wrapper|g" /etc/systemd/system/aidecheck.service
+  systemctl daemon-reexec
+fi
+' "6.3.2 Replace aide with aide.wrapper in aidecheck.service (Ubuntu best practice)"
+
+
+  # =====================[ SECTION 6.3.3: Ensure cryptographic integrity of audit tools ]=====================
+  start_section "6.3.3"
+
+  run_command '
+AUDIT_PATH=$(readlink -f /sbin)
+printf "%s\n" "" "# Audit Tools" \
+"$AUDIT_PATH/auditctl p+i+n+u+g+s+b+acl+xattrs+sha512" \
+"$AUDIT_PATH/auditd p+i+n+u+g+s+b+acl+xattrs+sha512" \
+"$AUDIT_PATH/ausearch p+i+n+u+g+s+b+acl+xattrs+sha512" \
+"$AUDIT_PATH/aureport p+i+n+u+g+s+b+acl+xattrs+sha512" \
+"$AUDIT_PATH/autrace p+i+n+u+g+s+b+acl+xattrs+sha512" \
+"$AUDIT_PATH/augenrules p+i+n+u+g+s+b+acl+xattrs+sha512" >> /etc/aide/aide.conf
+' "6.3.3 Add audit tool integrity rules to aide.conf using sha512"
+
+fi
+########################################################################################
+
 
 
 
