@@ -26,6 +26,9 @@ fi
 
 CURRENT_SECTION=""
 
+# =====================[ SUMMARY TRACKING ]=====================
+declare -A SUCCESS_COUNT
+declare -A ERROR_COUNT
 
 # =====================[ LOGGING FUNCTIONS ]=====================
 start_section() {
@@ -36,16 +39,17 @@ start_section() {
 
 log_success() {
     echo "  [✓] $1" | tee -a "$LOG_DIR/section_logs/$CURRENT_SECTION/success.log"
+    ((SUCCESS_COUNT["$CURRENT_SECTION"]++))
 }
 
 log_error() {
     echo "  [✗] $1" | tee -a "$LOG_DIR/section_logs/$CURRENT_SECTION/error.log"
+    ((ERROR_COUNT["$CURRENT_SECTION"]++))
 }
 
 log_message() {
     echo "  [ℹ] $1" | tee -a "$LOG_DIR/section_logs/$CURRENT_SECTION/info.log"
 }
-
 
 run_command() {
     local cmd="$1"
@@ -58,6 +62,7 @@ run_command() {
         log_error "$desc"
     fi
 }
+
 # =====================[ ARGUMENT PARSING ]=====================
 TARGET_SECTION=""
 while [[ $# -gt 0 ]]; do
@@ -75,7 +80,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 # =====================[ end_section ]=====================
-# Function to mark the end of a section
 end_section() {
   local status=$1
   if [ "$status" -eq 0 ]; then
@@ -84,6 +88,27 @@ end_section() {
     echo "[✗] Section failed"
   fi
 }
+
+# =====================[ FINAL SUMMARY ]=====================
+print_summary() {
+  echo ""
+  echo "✅ CIS Oracle Linux 9 hardening complete."
+  echo "📌 Please review any warnings or manual steps noted during execution."
+  echo "🔁 A reboot may be required for certain changes to take effect."
+  echo "🗂️ Logs saved to: $LOG_DIR"
+  echo ""
+  echo "📊 Summary of results:"
+  for section in "${!SUCCESS_COUNT[@]}"; do
+    echo "  - $section: ✅ ${SUCCESS_COUNT[$section]} success(es), ❌ ${ERROR_COUNT[$section]:-0} error(s)"
+  done
+
+  if grep -q "✗" "$LOG_DIR/main.log"; then
+    echo ""
+    echo "❗ Errors were recorded during execution."
+    echo "📄 Review them in: $LOG_DIR/all_errors.log"
+  fi
+}
+
 
 
 ########################################################################################
@@ -4311,7 +4336,111 @@ done
   run_command "auditctl -l" "6.2.3.final Show active audit rules"
 
 fi
+
 ########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.4" ]]; then
+
+  # =====================[ SECTION 6.2.4.1: Ensure audit log file permissions are restricted ]=====================
+  start_section "6.2.4.1"
+
+  run_command '
+if [ -f /etc/audit/auditd.conf ]; then
+  LOG_DIR=$(dirname $(awk -F "=" "/^\s*log_file/ {print \$2}" /etc/audit/auditd.conf | xargs))
+  find "$LOG_DIR" -type f -perm /0137 -exec chmod u-x,g-wx,o-rwx {} +
+fi
+' "6.2.4.1 Restrict audit log file permissions to 0640 or less"
+
+
+  # =====================[ SECTION 6.2.4.2: Ensure audit log files are owned by root ]=====================
+  start_section "6.2.4.2"
+
+  run_command '
+if [ -f /etc/audit/auditd.conf ]; then
+  LOG_DIR=$(dirname $(awk -F "=" "/^\s*log_file/ {print \$2}" /etc/audit/auditd.conf | xargs))
+  find "$LOG_DIR" -type f ! -user root -exec chown root {} +
+fi
+' "6.2.4.2 Ensure audit log files are owned by root"
+
+
+  # =====================[ SECTION 6.2.4.3: Ensure audit log files group owner is adm ]=====================
+  start_section "6.2.4.3"
+
+  run_command '
+sed -ri "s/^\s*#?\s*log_group\s*=.*/log_group = adm/" /etc/audit/auditd.conf
+' "6.2.4.3 Set log_group = adm in auditd.conf"
+
+  run_command "systemctl restart auditd" "6.2.4.3 Restart audit daemon to apply group ownership changes"
+
+  run_command '
+if [ -f /etc/audit/auditd.conf ]; then
+  LOG_DIR=$(dirname $(awk -F "=" "/^\s*log_file/ {print \$2}" /etc/audit/auditd.conf | xargs))
+  find "$LOG_DIR" -type f -name "audit.log*" ! -group adm ! -group root -exec chgrp adm {} +
+fi
+' "6.2.4.3 Set audit log files group owner to adm (excluding non-audit logs)"
+
+
+
+  # =====================[ SECTION 6.2.4.4: Ensure audit log directory permissions are restricted ]=====================
+  start_section "6.2.4.4"
+
+  run_command '
+if [ -f /etc/audit/auditd.conf ]; then
+  LOG_DIR=$(dirname $(awk -F "=" "/^\s*log_file/ {print \$2}" /etc/audit/auditd.conf | xargs))
+  chmod g-w,o-rwx "$LOG_DIR"
+fi
+' "6.2.4.4 Restrict audit log directory permissions to 0750 or less"
+
+
+  # =====================[ SECTION 6.2.4.5: Ensure audit config file permissions are restricted ]=====================
+  start_section "6.2.4.5"
+
+  run_command '
+find /etc/audit/ -type f \( -name "*.conf" -o -name "*.rules" \) -exec chmod u-x,g-wx,o-rwx {} +
+' "6.2.4.5 Restrict audit configuration file permissions to 0640 or less"
+
+
+  # =====================[ SECTION 6.2.4.6: Ensure audit config files are owned by root ]=====================
+  start_section "6.2.4.6"
+
+  run_command '
+find /etc/audit/ -type f \( -name "*.conf" -o -name "*.rules" \) ! -user root -exec chown root {} +
+' "6.2.4.6 Ensure audit configuration files are owned by root"
+
+
+  # =====================[ SECTION 6.2.4.7: Ensure audit config files group owner is root ]=====================
+  start_section "6.2.4.7"
+
+  run_command '
+find /etc/audit/ -type f \( -name "*.conf" -o -name "*.rules" \) ! -group root -exec chgrp root {} +
+' "6.2.4.7 Ensure audit configuration files are group-owned by root"
+
+
+  # =====================[ SECTION 6.2.4.8: Ensure audit tool permissions are restricted ]=====================
+  start_section "6.2.4.8"
+
+  run_command '
+chmod go-w /sbin/auditctl /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/auditd /sbin/augenrules
+' "6.2.4.8 Restrict audit tool permissions to prevent group/other write access"
+
+
+  # =====================[ SECTION 6.2.4.9: Ensure audit tool ownership is root ]=====================
+  start_section "6.2.4.9"
+
+  run_command '
+chown root /sbin/auditctl /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/auditd /sbin/augenrules
+' "6.2.4.9 Ensure audit tools are owned by root"
+
+
+  # =====================[ SECTION 6.2.4.10: Ensure audit tool group ownership is root ]=====================
+  start_section "6.2.4.10"
+
+  run_command '
+chgrp root /sbin/auditctl /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/auditd /sbin/augenrules
+' "6.2.4.10 Ensure audit tools are group-owned by root"
+
+fi
+########################################################################################
+
 
 
 
@@ -4319,7 +4448,7 @@ fi
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
 
 echo ""
-echo "✅ CIS Oracle Linux 9 hardening complete."
+echo "✅ CIS Ubuntu 24.04 hardening complete."
 echo "📌 Please review any warnings or manual steps noted during execution."
 echo "🔁 A reboot may be required for certain changes to take effect."
 echo "🗂️ Logs saved to: $LOG_DIR"
@@ -4330,26 +4459,23 @@ echo "📊 Summary of results:"
 ALL_ERRORS="$LOG_DIR/all_errors.log"
 > "$ALL_ERRORS"  # Clear or create the global error log
 
-for section in "$LOG_DIR/section_logs"/*; do
-  sec_name=$(basename "$section")
-  success_log="$section/success.log"
-  error_log="$section/error.log"
+# Only summarize sections from the current run
+for section in "${!SUCCESS_COUNT[@]}"; do
+  sec_path="$LOG_DIR/section_logs/$section"
+  success_log="$sec_path/success.log"
+  error_log="$sec_path/error.log"
 
-  success_count=0
-  error_count=0
+  success_count=${SUCCESS_COUNT[$section]:-0}
+  error_count=${ERROR_COUNT[$section]:-0}
 
-  # Count successes
-  [ -f "$success_log" ] && success_count=$(wc -l < "$success_log")
-
-  # Count errors and append to global error log
+  # Append errors to global error log
   if [ -f "$error_log" ]; then
-    error_count=$(wc -l < "$error_log")
     while IFS= read -r line; do
-      echo "[$sec_name] $line" >> "$ALL_ERRORS"
+      echo "[$section] $line" >> "$ALL_ERRORS"
     done < "$error_log"
   fi
 
-  echo "  - $sec_name: ✅ $success_count success(es), ❌ $error_count error(s)"
+  echo "  - $section: ✅ $success_count success(es), ❌ $error_count error(s)"
 done
 
 # 📄 Global error log summary
