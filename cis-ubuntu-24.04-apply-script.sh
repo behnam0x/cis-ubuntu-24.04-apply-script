@@ -484,8 +484,6 @@ EOF
 
   run_command "echo \"$BANNER\" > /etc/issue" "1.6.2 Set /etc/issue banner (local login)"
   run_command "echo \"$BANNER\" > /etc/issue.net" "1.6.3 Set /etc/issue.net banner (remote login)"
-
-  # Ensure SSH displays the banner before login
   run_command "sed -i '/^Banner /d' /etc/ssh/sshd_config && echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config" "1.6.x Configure SSH banner directive"
 
   # =====================[ 1.6.1: Create Custom MOTD Script ]=====================
@@ -541,22 +539,21 @@ echo -e "${FG_RED}${BOLD}🔐 Reminder:${RESET} Unauthorized access is prohibite
 EOF
 
   run_command "chmod +x /etc/update-motd.d/00-custom" "1.6.1 Make MOTD script executable"
-  run_command "/etc/update-motd.d/00-custom > /etc/motd" "1.6.1 Pipe MOTD output to /etc/motd"
 
   # =====================[ 1.6.4–1.6.6: File Permissions and Ownership ]=====================
-  run_command "chmod 644 /etc/issue /etc/issue.net /etc/update-motd.d/00-custom /etc/motd" "1.6.4–1.6.6 Set banner file permissions"
-  run_command "chown root:root /etc/issue /etc/issue.net /etc/update-motd.d/00-custom /etc/motd" "1.6.4–1.6.6 Set banner file ownership"
+  run_command "chmod 744 /etc/issue /etc/issue.net /etc/update-motd.d/00-custom" "1.6.4–1.6.6 Set banner file permissions"
+  run_command "chown root:root /etc/issue /etc/issue.net /etc/update-motd.d/00-custom" "1.6.4–1.6.6 Set banner file ownership"
 
   # =====================[ MOTD Interference and PAM Configuration ]=====================
   run_command "systemctl disable motd-news.service" "1.6.x Disable motd-news service"
   run_command "systemctl mask motd-news.service" "1.6.x Mask motd-news service"
-  run_command "rm -f /run/motd.dynamic" "1.6.x Remove dynamic MOTD"
+  
+  run_command "sed -i '/pam_motd.so/d' /etc/pam.d/sshd && echo 'session optional pam_motd.so motd=/run/motd.dynamic' >> /etc/pam.d/sshd" "1.6.x Configure PAM to show dynamic MOTD"
+  run_command "sed -i '/pam_motd.so/d' /etc/pam.d/login && echo 'session optional pam_motd.so motd=/run/motd.dynamic' >> /etc/pam.d/login" "1.6.x Ensure PAM login MOTD is enabled"
 
-  run_command "sed -i '/pam_motd.so/d' /etc/pam.d/sshd && echo 'session optional pam_motd.so motd=/etc/motd' >> /etc/pam.d/sshd" "1.6.x Configure PAM to show MOTD"
 fi
 
-
-#####################################################################################
+#################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.7" ]]; then
   # =====================[ SECTION 1.7: GDM Configuration ]=====================
   start_section "1.7"
@@ -4488,6 +4485,367 @@ printf "%s\n" "" "# Audit Tools" \
 ' "6.3.3 Add audit tool integrity rules to aide.conf using sha512"
 
 fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "7.1" ]]; then
+
+  # =====================[ SECTION 7.1.1: Ensure permissions on /etc/passwd are configured ]=====================
+  start_section "7.1.1"
+
+  run_command '
+chmod u-x,go-wx /etc/passwd
+' "7.1.1 Remove excess permissions from /etc/passwd"
+
+  run_command '
+chown root:root /etc/passwd
+' "7.1.1 Set owner and group of /etc/passwd to root"
+
+
+  # =====================[ SECTION 7.1.2: Ensure permissions on /etc/passwd- are configured ]=====================
+  start_section "7.1.2"
+
+  run_command '
+chmod u-x,go-wx /etc/passwd-
+' "7.1.2 Remove excess permissions from /etc/passwd-"
+
+  run_command '
+chown root:root /etc/passwd-
+' "7.1.2 Set owner and group of /etc/passwd- to root"
+
+
+  # =====================[ SECTION 7.1.3: Ensure permissions on /etc/group are configured ]=====================
+  start_section "7.1.3"
+
+  run_command '
+chmod u-x,go-wx /etc/group
+' "7.1.3 Remove excess permissions from /etc/group"
+
+  run_command '
+chown root:root /etc/group
+' "7.1.3 Set owner and group of /etc/group to root"
+
+
+  # =====================[ SECTION 7.1.4: Ensure permissions on /etc/group- are configured ]=====================
+  start_section "7.1.4"
+
+  run_command '
+chmod u-x,go-wx /etc/group-
+' "7.1.4 Remove excess permissions from /etc/group-"
+
+  run_command '
+chown root:root /etc/group-
+' "7.1.4 Set owner and group of /etc/group- to root"
+
+
+
+  # =====================[ SECTION 7.1.5: Ensure permissions on /etc/shadow are configured ]=====================
+  start_section "7.1.5"
+
+  run_command '
+chown root:root /etc/shadow
+' "7.1.5 Set owner and group of /etc/shadow to root or shadow"
+
+  run_command '
+chmod u-x,g-wx,o-rwx /etc/shadow
+' "7.1.5 Remove excess permissions from /etc/shadow"
+
+
+  # =====================[ SECTION 7.1.6: Ensure permissions on /etc/shadow- are configured ]=====================
+  start_section "7.1.6"
+
+  run_command '
+chown root:root /etc/shadow-
+' "7.1.6 Set owner and group of /etc/shadow- to root or shadow"
+
+  run_command '
+chmod u-x,g-wx,o-rwx /etc/shadow-
+' "7.1.6 Remove excess permissions from /etc/shadow-"
+
+
+  # =====================[ SECTION 7.1.7: Ensure permissions on /etc/gshadow are configured ]=====================
+  start_section "7.1.7"
+
+  run_command '
+chown root:shadow /etc/gshadow || chown root:root /etc/gshadow
+' "7.1.7 Set owner and group of /etc/gshadow to root or shadow"
+
+  run_command '
+chmod u-x,g-wx,o-rwx /etc/gshadow
+' "7.1.7 Remove excess permissions from /etc/gshadow"
+
+
+  # =====================[ SECTION 7.1.8: Ensure permissions on /etc/gshadow- are configured ]=====================
+  start_section "7.1.8"
+
+  run_command '
+chown root:shadow /etc/gshadow- || chown root:root /etc/gshadow-
+' "7.1.8 Set owner and group of /etc/gshadow- to root or shadow"
+
+  run_command '
+chmod u-x,g-wx,o-rwx /etc/gshadow-
+' "7.1.8 Remove excess permissions from /etc/gshadow-"
+
+
+  # =====================[ SECTION 7.1.9: Ensure permissions on /etc/shells are configured ]=====================
+  start_section "7.1.9"
+
+  run_command '
+chmod u-x,go-wx /etc/shells
+' "7.1.9 Remove excess permissions from /etc/shells"
+
+  run_command '
+chown root:root /etc/shells
+' "7.1.9 Set owner and group of /etc/shells to root"
+
+
+  # =====================[ SECTION 7.1.10: Ensure permissions on /etc/security/opasswd are configured ]=====================
+  start_section "7.1.10"
+
+  run_command '
+[ -e "/etc/security/opasswd" ] && chmod u-x,go-rwx /etc/security/opasswd
+' "7.1.10 Remove excess permissions from /etc/security/opasswd"
+
+  run_command '
+[ -e "/etc/security/opasswd" ] && chown root:root /etc/security/opasswd
+' "7.1.10 Set owner and group of /etc/security/opasswd to root"
+
+  run_command '
+[ -e "/etc/security/opasswd.old" ] && chmod u-x,go-rwx /etc/security/opasswd.old
+' "7.1.10 Remove excess permissions from /etc/security/opasswd.old"
+
+  run_command '
+[ -e "/etc/security/opasswd.old" ] && chown root:root /etc/security/opasswd.old
+' "7.1.10 Set owner and group of /etc/security/opasswd.old to root"
+
+
+  # =====================[ SECTION 7.1.11: Secure world writable files and directories ]=====================
+  start_section "7.1.11"
+
+  run_command '
+l_smask="01000"
+a_path=(! -path "/run/user/*" -a ! -path "/proc/*" -a ! -path "*/containerd/*" -a ! -path "*/kubelet/pods/*" -a ! -path "*/kubelet/plugins/*" -a ! -path "/sys/*" -a ! -path "/snap/*")
+
+while IFS= read -r l_mount; do
+  while IFS= read -r -d $'\''\0'\'' l_file; do
+    if [ -e "$l_file" ]; then
+      l_mode="$(stat -Lc '\''%#a'\'' "$l_file")"
+      if [ -f "$l_file" ]; then
+        chmod o-w "$l_file"
+      fi
+      if [ -d "$l_file" ]; then
+        if [ ! $(( l_mode & l_smask )) -gt 0 ]; then
+          chmod a+t "$l_file"
+        fi
+      fi
+    fi
+  done < <(find "$l_mount" -xdev \( "${a_path[@]}" \) \( -type f -o -type d \) -perm -0002 -print0 2>/dev/null)
+done < <(findmnt -Dkerno fstype,target | awk '\''($1 !~ /^\s*(nfs|proc|smb|vfat|iso9660|efivarfs|selinuxfs)/ && $2 !~ /^(\/run\/user\/|\/tmp|\/var\/tmp)/){print $2}'\'')
+' "7.1.11 Remove world-write from files and add sticky bit to directories"
+
+
+  # =====================[ SECTION 7.1.12: Ensure no unowned files or directories exist ]=====================
+  start_section "7.1.12"
+
+  run_command '
+find / -xdev \( -nouser -o -nogroup \) -exec chown root:root {} +
+' "7.1.12 Assign root ownership to unowned files and directories"
+
+
+  # =====================[ SECTION 7.1.13: Review SUID and SGID files manually ]=====================
+  start_section "7.1.13"
+
+  run_command '
+find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | tee "$LOG_DIR/section_logs/7.1.13/suid_sgid_files.log"
+' "7.1.13 Discover SUID and SGID files for manual review"
+
+  log_message "Manual review required: Check $LOG_DIR/section_logs/7.1.13/suid_sgid_files.log for potential rogue binaries."
+
+fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "7.2" ]]; then
+
+  # =====================[ SECTION 7.2.1: Ensure accounts use shadowed passwords ]=====================
+  start_section "7.2.1"
+  run_command <<'EOF'
+pwconv
+EOF
+  log_message "7.2.1 Completed: Migrated passwords to /etc/shadow using pwconv"
+
+
+  # =====================[ SECTION 7.2.2: Ensure /etc/shadow password fields are not empty ]=====================
+  start_section "7.2.2"
+  run_command <<'EOF'
+awk -F: '($2 == "") {print $1}' /etc/shadow | while read -r user; do
+  echo "Locking account with empty password: $user"
+  passwd -l "$user"
+done
+EOF
+  log_message "7.2.2 Completed: Locked accounts with empty password fields"
+
+
+  # =====================[ SECTION 7.2.3: Ensure all groups in /etc/passwd exist in /etc/group ]=====================
+  start_section "7.2.3"
+  run_command <<EOF
+awk -F: '{print \$1,\$4}' /etc/passwd | while read -r user gid; do
+  if ! grep -qE "^.*:.*:\$gid:" /etc/group; then
+    echo "Group ID \$gid referenced by user \$user does not exist in /etc/group"
+  fi
+done | tee "$LOG_DIR/section_logs/7.2.3/missing_groups.log"
+EOF
+  log_message "Manual remediation required: Review $LOG_DIR/section_logs/7.2.3/missing_groups.log and add missing groups to /etc/group as needed."
+
+
+  # =====================[ SECTION 7.2.4: Ensure shadow group is empty ]=====================
+  start_section "7.2.4"
+  run_command <<'EOF'
+sed -ri 's/(^shadow:[^:]*:[^:]*:)([^:]+$)/\1/' /etc/group
+EOF
+  run_command <<'EOF'
+awk -F: '$4 == 42 { print $1 }' /etc/passwd | while read -r user; do
+  echo "User $user has shadow as primary group. Consider changing it with: usermod -g <newgroup> $user"
+done | tee "$LOG_DIR/section_logs/7.2.4/shadow_primary_users.log"
+EOF
+  log_message "Manual remediation may be required: Review $LOG_DIR/section_logs/7.2.4/shadow_primary_users.log and change primary group if needed."
+
+
+  # =====================[ SECTION 7.2.5: Ensure no duplicate UIDs exist ]=====================
+  start_section "7.2.5"
+  run_command <<'EOF'
+awk -F: '{print $3}' /etc/passwd | sort | uniq -d | while read -r dup_uid; do
+  echo "Duplicate UID: $dup_uid"
+  awk -F: -v uid="$dup_uid" '$3 == uid {print \" - \" \$1}' /etc/passwd
+done | tee "$LOG_DIR/section_logs/7.2.5/duplicate_uids.log"
+EOF
+  log_message "Manual remediation required: Review $LOG_DIR/section_logs/7.2.5/duplicate_uids.log and assign unique UIDs as needed. Also audit file ownership for affected users."
+
+
+  # =====================[ SECTION 7.2.6: Ensure no duplicate GIDs exist ]=====================
+  start_section "7.2.6"
+  run_command <<'EOF'
+awk -F: '{print $3}' /etc/group | sort | uniq -d | while read -r dup_gid; do
+  echo "Duplicate GID: $dup_gid"
+  awk -F: -v gid="$dup_gid" '$3 == gid {print \" - \" \$1}' /etc/group
+done | tee "$LOG_DIR/section_logs/7.2.6/duplicate_gids.log"
+EOF
+  run_command <<'EOF'
+grpck
+EOF
+  log_message "Manual remediation required: Review $LOG_DIR/section_logs/7.2.6/duplicate_gids.log and assign unique GIDs as needed. Also audit file ownership for affected groups."
+
+
+  # =====================[ SECTION 7.2.7: Ensure no duplicate user names exist ]=====================
+  start_section "7.2.7"
+  run_command <<'EOF'
+cut -d: -f1 /etc/passwd | sort | uniq -d | while read -r dup_user; do
+  echo "Duplicate username: $dup_user"
+  grep "^$dup_user:" /etc/passwd
+done | tee "$LOG_DIR/section_logs/7.2.7/duplicate_usernames.log"
+EOF
+  log_message "Manual remediation required: Review $LOG_DIR/section_logs/7.2.7/duplicate_usernames.log and rename or remove duplicate usernames as needed."
+
+
+  # =====================[ SECTION 7.2.8: Ensure no duplicate group names exist ]=====================
+  start_section "7.2.8"
+  
+  run_command <<'EOF'
+  cut -d: -f1 /etc/group | sort | uniq -d | while read -r dup_group; do
+    echo "Duplicate group name: $dup_group"
+    grep "^$dup_group:" /etc/group
+  done | tee "$LOG_DIR/section_logs/7.2.8/duplicate_groupnames.log"
+  EOF
+  
+  log_message "Manual remediation required: Review $LOG_DIR/section_logs/7.2.8/duplicate_groupnames.log and rename or remove duplicate group names as needed."
+
+
+  # =====================[ SECTION 7.2.9: Ensure local interactive user home directories are configured ]=====================
+  start_section "7.2.9"
+
+  run_command <<'EOF'
+l_output2=""
+shells_regex=$(awk -F/ '$NF != "nologin" {print}' /etc/shells | sed -rn '/^\//{s,/,\\/,g;p}' | paste -s -d '|' -)
+l_valid_shells="^(${shells_regex})$"
+
+unset a_uarr && a_uarr=()
+while read -r l_epu l_eph; do
+  a_uarr+=("$l_epu $l_eph")
+done <<< "$(awk -v pat="$l_valid_shells" -F: '$NF ~ pat { print $1 \" \" $(NF-1) }' /etc/passwd)"
+
+for entry in "${a_uarr[@]}"; do
+  l_user=$(echo "$entry" | awk '{print $1}')
+  l_home=$(echo "$entry" | awk '{print $2}')
+
+  if [ -d "$l_home" ]; then
+    l_mask="0027"
+    l_max="$(printf '%o' $((0777 & ~$l_mask)))"
+    read -r l_own l_mode <<< "$(stat -Lc '%U %#a' "$l_home")"
+
+    if [ "$l_user" != "$l_own" ]; then
+      echo -e " - User: \"$l_user\" Home \"$l_home\" is owned by: \"$l_own\"\n - changing ownership to: \"$l_user\""
+      chown "$l_user" "$l_home"
+    fi
+
+    if [ $((l_mode & l_mask)) -gt 0 ]; then
+      echo -e " - User: \"$l_user\" Home \"$l_home\" is mode: \"$l_mode\" should be mode: \"$l_max\" or more restrictive\n - removing excess permissions"
+      chmod g-w,o-rwx "$l_home"
+    fi
+  else
+    echo -e " - User: \"$l_user\" Home \"$l_home\" doesn't exist\n - Please create a home in accordance with local site policy"
+  fi
+done
+EOF
+
+  log_message "7.2.9 Completed: Validated and corrected local interactive user home directory ownership and permissions"
+
+
+  # =====================[ SECTION 7.2.10: Ensure local interactive user dot files access is configured ]=====================
+  start_section "7.2.10"
+
+  run_command <<'EOF'
+shells_regex=$(awk -F/ '$NF != "nologin" {print}' /etc/shells | sed -rn '/^\//{s,/,\\/,g;p}' | paste -s -d '|' -)
+l_valid_shells="^(${shells_regex})$"
+
+a_user_and_home=()
+while read -r l_user l_home; do
+  [[ -n "$l_user" && -n "$l_home" ]] && a_user_and_home+=("$l_user:$l_home")
+done <<< "$(awk -v pat="$l_valid_shells" -F: '$NF ~ pat { print $1 \" \" $(NF-1) }' /etc/passwd)"
+
+for entry in "${a_user_and_home[@]}"; do
+  l_user="${entry%%:*}"
+  l_home="${entry##*:}"
+  [ ! -d "$l_home" ] && continue
+  l_group="$(id -gn "$l_user" | xargs)"
+
+  find "$l_home" -xdev -type f -name ".*" -print0 | while IFS= read -r -d $'\0' l_hdfile; do
+    read -r l_mode l_owner l_gowner <<< "$(stat -Lc '%#a %U %G' "$l_hdfile")"
+    case "$(basename "$l_hdfile")" in
+      .forward | .rhost )
+        echo " - File: \"$l_hdfile\" exists — please review and manually delete this file"
+        ;;
+      .netrc )
+        l_mask="0177"; l_change="u-x,go-rwx"
+        [ $(( l_mode & l_mask )) -gt 0 ] && chmod "$l_change" "$l_hdfile"
+        [ "$l_owner" != "$l_user" ] && chown "$l_user" "$l_hdfile"
+        [ "$l_gowner" != "$l_group" ] && chgrp "$l_group" "$l_hdfile"
+        ;;
+      .bash_history )
+        l_mask="0177"; l_change="u-x,go-rwx"
+        [ $(( l_mode & l_mask )) -gt 0 ] && chmod "$l_change" "$l_hdfile"
+        ;;
+      * )
+        l_mask="0133"; l_change="u-x,go-wx"
+        [ $(( l_mode & l_mask )) -gt 0 ] && chmod "$l_change" "$l_hdfile"
+        [ "$l_owner" != "$l_user" ] && chown "$l_user" "$l_hdfile"
+        [ "$l_gowner" != "$l_group" ] && chgrp "$l_group" "$l_hdfile"
+        ;;
+    esac
+  done
+done
+EOF
+
+  log_message "7.2.10 Completed: Secured dotfiles in interactive user home directories"
+
+fi
 ########################################################################################
 
 
@@ -4509,8 +4867,8 @@ echo "📊 Summary of results:"
 ALL_ERRORS="$LOG_DIR/all_errors.log"
 > "$ALL_ERRORS"  # Clear or create the global error log
 
-# Only summarize sections from the current run
-for section in "${!SUCCESS_COUNT[@]}"; do
+# Only summarize sections from the current run, sorted numerically
+for section in $(printf "%s\n" "${!SUCCESS_COUNT[@]}" | sort -V); do
   sec_path="$LOG_DIR/section_logs/$section"
   success_log="$sec_path/success.log"
   error_log="$sec_path/error.log"
@@ -4540,3 +4898,4 @@ fi
 
 echo ""
 echo "🛡️ Stay secure. Stay compliant."
+
