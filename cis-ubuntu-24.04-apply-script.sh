@@ -3102,22 +3102,31 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   start_section "5.4.3.3"
   
   # Set default umask to 027 system-wide via profile.d
-  run_command "printf '%s\\n' 'umask 027' > /etc/profile.d/50-systemwide_umask.sh" "5.4.3.3 Create system-wide umask config file"
+  run_command "printf '%s\\n' 'umask 027' > /etc/profile.d/50-systemwide_umask.sh" \
+    "5.4.3.3 Create system-wide umask config file"
   
   # Make umask readonly and exported
-  run_command "echo 'readonly umask' >> /etc/profile.d/50-systemwide_umask.sh" "5.4.3.3 Make umask readonly"
-  run_command "echo 'export umask' >> /etc/profile.d/50-systemwide_umask.sh" "5.4.3.3 Export umask setting"
+  run_command "echo 'readonly umask' >> /etc/profile.d/50-systemwide_umask.sh" \
+    "5.4.3.3 Make umask readonly"
+  run_command "echo 'export umask' >> /etc/profile.d/50-systemwide_umask.sh" \
+    "5.4.3.3 Export umask setting"
   
-  # Comment out weaker umask settings in system-wide config files
-  run_command "sed -i '/^[[:space:]]*umask[[:space:]]\+[0-9]\{3\}/s/^/#/' /etc/profile /etc/bashrc /etc/bash.bashrc /etc/login.defs /etc/default/login" "5.4.3.3 Comment out weaker umask settings in system files"
+  # Comment out weaker umask settings in system-wide config files (only if they exist)
+  run_command "for f in /etc/profile /etc/bashrc /etc/bash.bashrc /etc/login.defs /etc/default/login; do \
+    [ -f \"\\\$f\" ] && sed -i '/^[[:space:]]*umask[[:space:]]\\+[0-9]\\{3\\}/s/^/#/' \"\\\$f\"; done" \
+    "5.4.3.3 Comment out weaker umask settings in system files"
+
   
   # Comment out weaker umask settings in profile.d scripts
-  run_command "find /etc/profile.d/ -type f -name '*.sh' -exec sed -i '/^[[:space:]]*umask [0-9][0-9][0-9]/s/^/#/' {} +" "5.4.3.3 Comment out weaker umask settings in profile.d scripts"
-
+  run_command "find /etc/profile.d/ -type f -name '*.sh' -exec sed -i \
+    '/^[[:space:]]*umask [0-9][0-9][0-9]/s/^/#/' {} +" \
+    "5.4.3.3 Comment out weaker umask settings in profile.d scripts"
+  
 fi
 
+
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" || "$TARGET_SECTION" == 6.1 ]]; then
   # =====================[ SECTION 6.1.1.1: Ensure journald service is enabled and active ]=====================
   start_section "6.1.1.1"
   
@@ -3211,7 +3220,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" ]]; then
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2" || "$TARGET_SECTION" == 6.1 ]]; then
   # =====================[ SECTION 6.1.2.1.1: Ensure systemd-journal-remote is installed ]=====================
   start_section "6.1.2.1.1"
 
@@ -3388,7 +3397,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2" ]]; then
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" == 6.1 ]]; then
 
   # =====================[ SECTION 6.1.3.1: Ensure rsyslog is installed ]=====================
   start_section "6.1.3.1"
@@ -3611,7 +3620,7 @@ EOF
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.4" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.4" || "$TARGET_SECTION" == 6.1 ]]; then
 
   # =====================[ SECTION 6.1.4.1: Ensure access to all logfiles has been configured ]=====================
   start_section "6.1.4.1"
@@ -3689,7 +3698,7 @@ fi
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" || "$TARGET_SECTION" == 6.2 ]]; then
 
   # =====================[ SECTION 6.2.1.1: Ensure auditd packages are installed ]=====================
   start_section "6.2.1.1"
@@ -3747,7 +3756,7 @@ fi
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.2" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.2" || "$TARGET_SECTION" == 6.2 ]]; then
 
   # =====================[ SECTION 6.2.2.1: Ensure audit log storage size is configured ]=====================
   start_section "6.2.2.1"
@@ -3814,7 +3823,7 @@ fi
 
 fi
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.3" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.3" || "$TARGET_SECTION" == 6.2 ]]; then
 
   # =====================[ SECTION 6.2.3.1: Ensure sudoers changes are audited ]=====================
   start_section "6.2.3.1"
@@ -4469,7 +4478,7 @@ done
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.4" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.4" || "$TARGET_SECTION" == 6.2 ]]; then
 
   # =====================[ SECTION 6.2.4.1: Ensure audit log file permissions are restricted ]=====================
   start_section "6.2.4.1"
