@@ -6,22 +6,19 @@
 # =====================[ GLOBAL VARIABLES ]=====================
 USE_TIMESTAMP=true  # Set to false to reuse the same log folder
 
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+RUN_TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 BASE_LOG_DIR="/home/${SUDO_USER:-$(whoami)}/setup_logs"
 
 if [ "$USE_TIMESTAMP" = true ]; then
-  LOG_DIR="$BASE_LOG_DIR/$TIMESTAMP"
-  mkdir -p "$LOG_DIR/section_logs"
-
-  # 🧹 Keep only the 6 most recent timestamped log folders
+  LOG_DIR="$BASE_LOG_DIR/$RUN_TIMESTAMP"
+  mkdir -p "$LOG_DIR"
+  # 🧹 Keep only the 5 most recent timestamped log folders
   cd "$BASE_LOG_DIR"
-  ls -dt */ | tail -n +7 | xargs -r rm -rf
+  ls -dt */ | tail -n +6 | xargs -r rm -rf
 else
   LOG_DIR="$BASE_LOG_DIR"
-  rm -rf "$LOG_DIR/section_logs"/*
-  > "$LOG_DIR/main.log"
-  > "$LOG_DIR/all_errors.log"
-  mkdir -p "$LOG_DIR/section_logs"
+  rm -rf "$LOG_DIR"/*
+  mkdir -p "$LOG_DIR"
 fi
 
 CURRENT_SECTION=""
@@ -30,37 +27,60 @@ CURRENT_SECTION=""
 declare -A SUCCESS_COUNT
 declare -A ERROR_COUNT
 
+# =====================[ LOGGING FILES ]=====================
+SUCCESS_LOG="$LOG_DIR/success.log"
+ERROR_LOG="$LOG_DIR/error.log"
+INFO_LOG="$LOG_DIR/info.log"
+DETAILS_LOG="$LOG_DIR/details.log"
+
+> "$SUCCESS_LOG"
+> "$ERROR_LOG"
+> "$INFO_LOG"
+> "$DETAILS_LOG"
+
 # =====================[ LOGGING FUNCTIONS ]=====================
 start_section() {
-    CURRENT_SECTION="$1"
-    echo "[$(date '+%H:%M:%S')] Starting SECTION $CURRENT_SECTION" | tee -a "$LOG_DIR/main.log"
-    mkdir -p "$LOG_DIR/section_logs/$CURRENT_SECTION"
+  CURRENT_SECTION="$1"
+  echo "[ℹ] 🔹 Starting section: $CURRENT_SECTION" | tee -a "$INFO_LOG"
 }
 
+
 log_success() {
-    echo "  [✓] $1" | tee -a "$LOG_DIR/section_logs/$CURRENT_SECTION/success.log"
-    ((SUCCESS_COUNT["$CURRENT_SECTION"]++))
+  local MSG="  [✓] $1"
+  echo -e "\e[32m$MSG\e[0m" | tee -a "$SUCCESS_LOG"
+  ((SUCCESS_COUNT["$CURRENT_SECTION"]++))
 }
 
 log_error() {
-    echo "  [✗] $1" | tee -a "$LOG_DIR/section_logs/$CURRENT_SECTION/error.log"
-    ((ERROR_COUNT["$CURRENT_SECTION"]++))
+  local MSG="  [✗] $1"
+  echo -e "\e[31m$MSG\e[0m" | tee -a "$ERROR_LOG"
+  ((ERROR_COUNT["$CURRENT_SECTION"]++))
 }
 
 log_message() {
-    echo "  [ℹ] $1" | tee -a "$LOG_DIR/section_logs/$CURRENT_SECTION/info.log"
+  local MSG="  [ℹ] $1"
+  echo -e "\e[36m$MSG\e[0m" | tee -a "$INFO_LOG"
 }
 
 run_command() {
-    local cmd="$1"
-    local desc="$2"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] EXEC: $desc" >> "$LOG_DIR/section_logs/$CURRENT_SECTION/details.log"
-    echo "COMMAND: $cmd" >> "$LOG_DIR/section_logs/$CURRENT_SECTION/details.log"
-    if eval "$cmd" >> "$LOG_DIR/section_logs/$CURRENT_SECTION/details.log" 2>&1; then
-        log_success "$desc"
-    else
-        log_error "$desc"
-    fi
+  local CMD="$1"
+  local DESC="$2"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] EXEC: $DESC" >> "$DETAILS_LOG"
+  echo "COMMAND: $CMD" >> "$DETAILS_LOG"
+  if eval "$CMD" >> "$DETAILS_LOG" 2>&1; then
+    log_success "$DESC"
+  else
+    log_error "$DESC"
+  fi
+}
+
+end_section() {
+  local status=$1
+  if [ "$status" -eq 0 ]; then
+    echo -e "\e[32m[✓] Section completed successfully\e[0m"
+  else
+    echo -e "\e[31m[✗] Section failed\e[0m"
+  fi
 }
 
 # =====================[ ARGUMENT PARSING ]=====================
@@ -79,34 +99,42 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# =====================[ end_section ]=====================
-end_section() {
-  local status=$1
-  if [ "$status" -eq 0 ]; then
-    echo "[✓] Section completed successfully"
-  else
-    echo "[✗] Section failed"
-  fi
-}
-
 # =====================[ FINAL SUMMARY ]=====================
 print_summary() {
   echo ""
-  echo "✅ CIS Oracle Linux 9 hardening complete."
-  echo "📌 Please review any warnings or manual steps noted during execution."
-  echo "🔁 A reboot may be required for certain changes to take effect."
-  echo "🗂️ Logs saved to: $LOG_DIR"
+  echo -e "\e[32m✅ CIS Ubuntu 24.04 hardening complete.\e[0m"
+  echo -e "\e[34m📌 Please review any warnings or manual steps noted during execution.\e[0m"
+  echo -e "\e[33m🔁 A reboot may be required for certain changes to take effect.\e[0m"
+  echo -e "\e[36m🗂️ Logs saved to: $LOG_DIR\e[0m"
   echo ""
-  echo "📊 Summary of results:"
-  for section in "${!SUCCESS_COUNT[@]}"; do
-    echo "  - $section: ✅ ${SUCCESS_COUNT[$section]} success(es), ❌ ${ERROR_COUNT[$section]:-0} error(s)"
+
+  echo -e "\e[36m📊 Summary of results:\e[0m"
+  for section in $(printf "%s\n" "${!SUCCESS_COUNT[@]}" | sort -V); do
+    success_count=${SUCCESS_COUNT[$section]:-0}
+    error_count=${ERROR_COUNT[$section]:-0}
+    echo -n "  - $section:"
+    echo -ne " \e[32m✅ $success_count success(es)\e[0m"
+    echo -ne ", \e[31m❌ $error_count error(s)\e[0m"
+    echo ""
   done
 
-  if grep -q "✗" "$LOG_DIR/main.log"; then
+  if [ -s "$ERROR_LOG" ]; then
     echo ""
-    echo "❗ Errors were recorded during execution."
-    echo "📄 Review them in: $LOG_DIR/all_errors.log"
+    echo -e "\e[31m❗ Errors were recorded during execution.\e[0m"
+    echo -e "\e[33m📄 Review them in: $ERROR_LOG\e[0m"
+  else
+    echo ""
+    echo -e "\e[32m✅ No errors recorded in global log.\e[0m"
   fi
+
+  echo ""
+  echo -e "\e[36m📁 Log files for this run:\e[0m"
+  echo "    ├── Success log: $SUCCESS_LOG"
+  echo "    ├── Error log:   $ERROR_LOG"
+  echo "    ├── Info log:    $INFO_LOG"
+  echo "    └── Details log: $DETAILS_LOG"
+  echo ""
+  echo -e "\e[36m🛡️ Stay secure. Stay compliant.\e[0m"
 }
 
 
@@ -255,13 +283,24 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.2" ]]; then
 
   log_message "1.2.1.2 Manual remediation: Review and configure repositories according to site policy"
 
+
   # =====================[ SECTION 1.2.2.1: Ensure updates and security patches are installed ]=====================
   start_section "1.2.2.1"
+
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
 
   run_apt_command() {
     local CMD="$1"
     local LABEL="$2"
     local LOG="/tmp/apt_output.log"
+
+    if ! is_online; then
+      log_message "$LABEL Skipped: system appears to be offline"
+      return
+    fi
 
     if ! command -v timeout &>/dev/null; then
       log_message "$LABEL Skipped: 'timeout' command not available"
@@ -290,6 +329,8 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.2" ]]; then
 
   log_message "1.2.2.1 Manual review: Confirm updates and patches align with site policy"
 fi
+
+
 
 #############################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.3" ]]; then
@@ -861,12 +902,21 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" ]]; then
   # =====================[ SECTION 2.3: Time Synchronization ]=====================
   start_section "2.3"
 
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
   # === Choose your preferred time sync daemon ===
   TIME_SYNC_DAEMON="chrony"  # Options: chrony or systemd-timesyncd
 
   if [[ "$TIME_SYNC_DAEMON" == "chrony" ]]; then
     # ---------------------[ Chrony Setup ]---------------------
-    run_command "apt update && apt install -y chrony" "2.3 Install chrony"
+    if is_online; then
+      run_command "apt update && apt install -y chrony" "2.3 Install chrony"
+    else
+      log_message "2.3 Skipped chrony install: system appears to be offline"
+    fi
 
     # Disable systemd-timesyncd
     if systemctl is-active systemd-timesyncd.service &>/dev/null; then
@@ -904,8 +954,12 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" ]]; then
 
   elif [[ "$TIME_SYNC_DAEMON" == "systemd-timesyncd" ]]; then
     # ---------------------[ systemd-timesyncd Setup ]---------------------
-    run_command "apt purge -y chrony" "2.3 Remove chrony"
-    run_command "apt autoremove -y chrony" "2.3 Autoremove chrony dependencies"
+    if is_online; then
+      run_command "apt purge -y chrony" "2.3 Remove chrony"
+      run_command "apt autoremove -y chrony" "2.3 Autoremove chrony dependencies"
+    else
+      log_message "2.3 Skipped chrony removal: system appears to be offline"
+    fi
 
     # Set timezone
     run_command "timedatectl set-timezone Asia/Tehran" "2.3 Set timezone to Asia/Tehran"
@@ -913,20 +967,21 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" ]]; then
     # Configure systemd-timesyncd
     TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
     TIMESERVER="pool asia.pool.ntp.org"
-    if ! grep -q "^NTP=" "$TIMESYNC_CONF"; then
+    if grep -q "^NTP=" "$TIMESYNC_CONF"; then
+      run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3 Update NTP server in timesyncd.conf"
+    else
       run_command "sed -i '/^
 
 \[Time\]
 
 /a NTP=${TIMESERVER}' $TIMESYNC_CONF" "2.3 Add NTP server to timesyncd.conf"
-    else
-      run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3 Update NTP server in timesyncd.conf"
     fi
 
     run_command "systemctl enable systemd-timesyncd" "2.3 Enable systemd-timesyncd"
     run_command "systemctl start systemd-timesyncd" "2.3 Start systemd-timesyncd"
   fi
 fi
+
 
 
 #####################################################################################
@@ -2162,24 +2217,39 @@ fi
 
 ###############################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3" ]]; then
+
   # =====================[ SECTION 5.3.1.1: Ensure latest version of PAM is installed ]=====================
   start_section "5.3.1.1"
 
-  # Install or reinstall essential PAM packages using apt
-  apt update
-  apt install --reinstall -y \
-    libpam0g \
-    libpam-modules \
-    libpam-modules-bin \
-    libpam-runtime \
-    libpam-pwquality \
-    libpam-tmpdir \
-    libpam-fprintd
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
 
-  # Reconfigure PAM profiles to apply changes
-  pam-auth-update --force
+  # Install PAM libraries only if online
+  if is_online; then
+    apt update
+    apt install --reinstall -y \
+      libpam0g \
+      libpam-modules \
+      libpam-modules-bin \
+      libpam-runtime \
+      libpam-pwquality \
+      libpam-tmpdir \
+      libpam-fprintd
+  else
+    log_message "5.3.1.1 Skipped PAM package install: system appears to be offline"
+  fi
+
+  # Reconfigure PAM profiles if tool is available
+  if command -v pam-auth-update &>/dev/null; then
+    pam-auth-update --force
+  else
+    log_message "5.3.1.1 Skipped pam-auth-update: command not available"
+  fi
 
   # =====================[ PAM Functionality Test: Validate passwd works ]=====================
+  userdel -r testuser_5311 2>/dev/null
   useradd -m testuser_5311
   echo "testuser_5311:TempPass123!" | chpasswd
 
@@ -2193,6 +2263,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3" ]]; then
     ls -l /etc/shadow >> /tmp/passwd_test.log
     stat /etc/shadow >> /tmp/passwd_test.log
   fi
+
 
 
 
@@ -2219,28 +2290,41 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3" ]]; then
     log_message "5.3.1.2 [ℹ] libpam-modules is not installed — skipping upgrade"
   fi
 
+
   # =====================[ SECTION 5.3.1.3: Ensure libpam-pwquality is installed ]=====================
   start_section "5.3.1.3"
-  
+
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
   # Check if libpam-pwquality is installed
   if dpkg -s libpam-pwquality >/dev/null 2>&1; then
     log_message "5.3.1.3 [✓] libpam-pwquality is already installed"
   else
-    # Attempt installation
-    timeout 60 apt-get install -y libpam-pwquality > /tmp/pwquality_install.log 2>&1
-    EXIT_CODE=$?
-  
-    if [[ $EXIT_CODE -eq 124 ]]; then
-      log_message "5.3.1.3 [✗] Timeout: libpam-pwquality installation took too long"
-    elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" /tmp/pwquality_install.log; then
-      log_message "5.3.1.3 [✗] Network error: Unable to reach repositories — installation failed"
-    elif [[ $EXIT_CODE -ne 0 ]]; then
-      log_message "5.3.1.3 [✗] Error: libpam-pwquality installation failed with exit code $EXIT_CODE"
+    if ! is_online; then
+      log_message "5.3.1.3 [✗] Skipped: system appears to be offline — libpam-pwquality not installed"
+    elif ! command -v timeout &>/dev/null; then
+      log_message "5.3.1.3 [✗] Skipped: 'timeout' command not available"
     else
-      log_message "5.3.1.3 [✓] Success: libpam-pwquality installed"
+      timeout 60 apt-get install -y libpam-pwquality > /tmp/pwquality_install.log 2>&1
+      EXIT_CODE=$?
+
+      if [[ $EXIT_CODE -eq 124 ]]; then
+        log_message "5.3.1.3 [✗] Timeout: libpam-pwquality installation took too long"
+      elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" /tmp/pwquality_install.log; then
+        log_message "5.3.1.3 [✗] Network error: Unable to reach repositories — installation failed"
+      elif [[ $EXIT_CODE -ne 0 ]]; then
+        log_message "5.3.1.3 [✗] Error: libpam-pwquality installation failed with exit code $EXIT_CODE"
+      else
+        log_message "5.3.1.3 [✓] Success: libpam-pwquality installed"
+      fi
+      log_message "5.3.1.3 Log saved to /tmp/pwquality_install.log"
     fi
-    log_message "5.3.1.3 Log saved to /tmp/pwquality_install.log"
   fi
+
+
 
 
   # =====================[ SECTION 5.3.2.1: Ensure pam_unix module is enabled ]=====================
@@ -2766,12 +2850,42 @@ EOF
   log_message "5.3.3.4.3 [✓] Success: pam_unix configured with strong password hashing algorithm"
   
 
+
   # =====================[ SECTION 5.3.3.4.4: Ensure pam_unix includes use_authtok in Password section only ]=====================
   start_section "5.3.3.4.4"
-  
-  # Identify PAM profiles using pam_unix.so in Password section
+
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
+  # Install all required PAM modules first
+  if is_online; then
+    apt update
+    apt install --reinstall -y \
+      libpam0g \
+      libpam-modules \
+      libpam-modules-bin \
+      libpam-runtime \
+      libpam-pwquality \
+      libpam-tmpdir \
+      libpam-fprintd
+  else
+    log_message "5.3.3.4.4 Skipped PAM package install: system appears to be offline"
+  fi
+
+  # Confirm pam_unix.so is present
+  grep pam_unix.so /etc/pam.d/common-password || echo "Missing pam_unix.so — passwd will fail"
+
+  # Reconfigure PAM profiles
+  if command -v pam-auth-update &>/dev/null; then
+    pam-auth-update --force
+  else
+    log_message "5.3.3.4.4 Skipped pam-auth-update: command not available"
+  fi
+
+  # Modify PAM profiles to include use_authtok in Password section only
   awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_unix\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
-    # Process Password section only
     awk '
       BEGIN { in_password = 0 }
       /^Password-Type:/ { in_password = 1; next }
@@ -2785,38 +2899,29 @@ EOF
       }
     ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
     log_message "5.3.3.4.4 [✓] Updated $file to include use_authtok in Password section"
-  
-    # Extract profile name from file name
+
     PROFILE_NAME=$(basename "$file")
     run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.4 [✓] Re-enabled PAM profile $PROFILE_NAME"
   done
-  
+
   log_message "5.3.3.4.4 [✓] Success: pam_unix includes use_authtok in Password section only"
 
-
-  # Install all required PAM modules
-  apt update
-  apt install --reinstall -y \
-    libpam0g \
-    libpam-modules \
-    libpam-modules-bin \
-    libpam-runtime \
-    libpam-pwquality \
-    libpam-tmpdir \
-    libpam-fprintd
-  
-  # Reconfigure PAM profiles
-  pam-auth-update --force
-  
-  # Confirm pam_unix.so is present
-  grep pam_unix.so /etc/pam.d/common-password || echo "Missing pam_unix.so — passwd will fail"
-  
-  # Now run the password test
+  # =====================[ PAM Functionality Test ]=====================
+  userdel -r testuser_5311 2>/dev/null
   useradd -m testuser_5311
   echo "testuser_5311:TempPass123!" | chpasswd
   echo -e "TempPass123!\nNewPass123!\nNewPass123!" | passwd testuser_5311 > /tmp/passwd_test.log 2>&1
+  EXIT_CODE=$?
 
+  if [[ $EXIT_CODE -eq 0 ]]; then
+    log_message "5.3.3.4.4 [✓] Password change test passed for testuser_5311"
+  else
+    log_message "5.3.3.4.4 [✗] Password change test failed — check /tmp/passwd_test.log and PAM configuration"
+    ls -l /etc/shadow >> /tmp/passwd_test.log
+    stat /etc/shadow >> /tmp/passwd_test.log
+  fi
 fi
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
@@ -3109,10 +3214,18 @@ fi
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2" ]]; then
   # =====================[ SECTION 6.1.2.1.1: Ensure systemd-journal-remote is installed ]=====================
   start_section "6.1.2.1.1"
-  
-  # Install systemd-journal-remote package
-  run_command "apt install -y systemd-journal-remote" "6.1.2.1.1 Install systemd-journal-remote"
-  
+
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
+  if is_online; then
+    run_command "apt install -y systemd-journal-remote" "6.1.2.1.1 Install systemd-journal-remote"
+  else
+    log_message "6.1.2.1.1 Skipped: system appears to be offline — systemd-journal-remote not installed"
+  fi
+
   # =====================[ SECTION 6.1.2.1.2: Ensure systemd-journal-upload authentication is configured ]=====================
   start_section "6.1.2.1.2"
   
@@ -3279,7 +3392,18 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" ]]; then
 
   # =====================[ SECTION 6.1.3.1: Ensure rsyslog is installed ]=====================
   start_section "6.1.3.1"
-  run_command "apt install -y rsyslog" "6.1.3.1 Install rsyslog"
+
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
+  if is_online; then
+    run_command "apt install -y rsyslog" "6.1.3.1 Install rsyslog"
+  else
+    log_message "6.1.3.1 Skipped: system appears to be offline — rsyslog not installed"
+  fi
+
 
   # =====================[ SECTION 6.1.3.2: Ensure rsyslog service is enabled and active ]=====================
   start_section "6.1.3.2"
@@ -3570,7 +3694,17 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" ]]; then
   # =====================[ SECTION 6.2.1.1: Ensure auditd packages are installed ]=====================
   start_section "6.2.1.1"
 
-  run_command "apt install -y auditd audispd-plugins" "6.2.1.1 Install auditd and audispd-plugins"
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
+  if is_online; then
+    run_command "apt install -y auditd audispd-plugins" "6.2.1.1 Install auditd and audispd-plugins"
+  else
+    log_message "6.2.1.1 Skipped: system appears to be offline — auditd not installed"
+  fi
+
   
   # =====================[ SECTION 6.2.1.2: Ensure auditd service is enabled and active ]=====================
   start_section "6.2.1.2"
@@ -4443,13 +4577,40 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.3" ]]; then
   # =====================[ SECTION 6.3.1: Ensure AIDE is installed and initialized ]=====================
   start_section "6.3.1"
 
-  run_command "apt install -y aide aide-common" "6.3.1 Install AIDE and aide-common packages"
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
 
-  run_command "aideinit" "6.3.1 Initialize AIDE database"
+  # Attempt to install AIDE if not already installed
+  if ! dpkg -s aide >/dev/null 2>&1; then
+    if is_online; then
+      run_command "apt install -y aide aide-common" "6.3.1 Install AIDE and aide-common packages"
+    else
+      log_message "6.3.1 Skipped: system appears to be offline — AIDE not installed"
+    fi
+  else
+    log_message "6.3.1 [✓] AIDE is already installed"
+  fi
 
-  run_command "mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db" "6.3.1 Move initialized AIDE database into place"
+  # Re-check if AIDE is installed before continuing
+  if ! dpkg -s aide >/dev/null 2>&1; then
+    log_message "6.3.1 [✗] AIDE is not installed — skipping initialization and scheduling"
+    return
+  fi
 
+  # Initialize AIDE database
+  if command -v aideinit &>/dev/null; then
+    run_command "aideinit" "6.3.1 Initialize AIDE database"
 
+    if [[ -f /var/lib/aide/aide.db.new ]]; then
+      run_command "mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db" "6.3.1 Move initialized AIDE database into place"
+    else
+      log_message "6.3.1 Warning: aide.db.new not found — initialization may have failed"
+    fi
+  else
+    log_message "6.3.1 Skipped: aideinit command not found — initialization not performed"
+  fi
 
   # =====================[ SECTION 6.3.2: Ensure AIDE integrity checks are scheduled ]=====================
   start_section "6.3.2"
@@ -4469,7 +4630,6 @@ if grep -q "/usr/bin/aide" /etc/systemd/system/aidecheck.service; then
 fi
 ' "6.3.2 Replace aide with aide.wrapper in aidecheck.service (Ubuntu best practice)"
 
-
   # =====================[ SECTION 6.3.3: Ensure cryptographic integrity of audit tools ]=====================
   start_section "6.3.3"
 
@@ -4486,7 +4646,8 @@ printf "%s\n" "" "# Audit Tools" \
 
 fi
 
-########################################################################################
+
+##############################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "7.1" ]]; then
 
   # =====================[ SECTION 7.1.1: Ensure permissions on /etc/passwd are configured ]=====================
@@ -4856,46 +5017,44 @@ fi
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
 
 echo ""
-echo "✅ CIS Ubuntu 24.04 hardening complete."
-echo "📌 Please review any warnings or manual steps noted during execution."
-echo "🔁 A reboot may be required for certain changes to take effect."
-echo "🗂️ Logs saved to: $LOG_DIR"
+echo -e "\e[32m✅ CIS Ubuntu 24.04 hardening complete.\e[0m"
+echo -e "\e[34m📌 Please review any warnings or manual steps noted during execution.\e[0m"
+echo -e "\e[33m🔁 A reboot may be required for certain changes to take effect.\e[0m"
+echo -e "\e[36m🗂️ Logs saved to: $LOG_DIR\e[0m"
 echo ""
 
 # 📊 Summary of results
-echo "📊 Summary of results:"
-ALL_ERRORS="$LOG_DIR/all_errors.log"
-> "$ALL_ERRORS"  # Clear or create the global error log
+echo -e "\e[36m📊 Summary of results:\e[0m"
 
-# Only summarize sections from the current run, sorted numerically
+# Print per-section summary
 for section in $(printf "%s\n" "${!SUCCESS_COUNT[@]}" | sort -V); do
-  sec_path="$LOG_DIR/section_logs/$section"
-  success_log="$sec_path/success.log"
-  error_log="$sec_path/error.log"
-
   success_count=${SUCCESS_COUNT[$section]:-0}
   error_count=${ERROR_COUNT[$section]:-0}
-
-  # Append errors to global error log
-  if [ -f "$error_log" ]; then
-    while IFS= read -r line; do
-      echo "[$section] $line" >> "$ALL_ERRORS"
-    done < "$error_log"
-  fi
-
-  echo "  - $section: ✅ $success_count success(es), ❌ $error_count error(s)"
+  echo -n "  - $section:"
+  echo -ne " \e[32m✅ $success_count success(es)\e[0m"
+  echo -ne ", \e[31m❌ $error_count error(s)\e[0m"
+  echo ""
 done
 
 # 📄 Global error log summary
-if [ -s "$ALL_ERRORS" ]; then
+ERROR_LOG="$LOG_DIR/error.log"
+if [ -s "$ERROR_LOG" ]; then
   echo ""
-  echo "❗ Errors were recorded during execution."
-  echo "📄 Review them in: $ALL_ERRORS"
+  echo -e "\e[31m❗ Errors were recorded during execution.\e[0m"
+  echo -e "\e[33m📄 Review them in: $ERROR_LOG\e[0m"
 else
   echo ""
-  echo "✅ No errors recorded in global log."
+  echo -e "\e[32m✅ No errors recorded in global log.\e[0m"
 fi
 
+# 📁 Log file paths
 echo ""
-echo "🛡️ Stay secure. Stay compliant."
+echo -e "\e[36m📁 Log files for this run:\e[0m"
+echo "    ├── Success log: $LOG_DIR/success.log"
+echo "    ├── Error log:   $LOG_DIR/error.log"
+echo "    ├── Info log:    $LOG_DIR/info.log"
+echo "    └── Details log: $LOG_DIR/details.log"
+
+echo ""
+echo -e "\e[36m🛡️ Stay secure. Stay compliant.\e[0m"
 
