@@ -41,8 +41,9 @@ DETAILS_LOG="$LOG_DIR/details.log"
 # =====================[ LOGGING FUNCTIONS ]=====================
 start_section() {
   CURRENT_SECTION="$1"
-  echo "[ℹ] 🔹 Starting section: $CURRENT_SECTION" | tee -a "$INFO_LOG"
+  echo "[▶] 🔹 Starting section: $CURRENT_SECTION"
 }
+
 
 
 log_success() {
@@ -898,90 +899,100 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.2" ]]; then
   done
 fi
 
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" ]]; then
-  # =====================[ SECTION 2.3: Time Synchronization ]=====================
-  start_section "2.3"
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" || "$TARGET_SECTION" == 2.3* ]]; then
 
-  # Helper: Check if system is online
-  is_online() {
-    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
-  }
+# =====================[ SECTION 2.3: Configure Time Synchronization ]=====================
+start_section "2.3"
 
-  # === Choose your preferred time sync daemon ===
-  TIME_SYNC_DAEMON="chrony"  # Options: chrony or systemd-timesyncd
+# Helper: Check if system is online
+is_online() {
+  ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+}
 
-  if [[ "$TIME_SYNC_DAEMON" == "chrony" ]]; then
-    # ---------------------[ Chrony Setup ]---------------------
-    if is_online; then
-      run_command "apt update && apt install -y chrony" "2.3 Install chrony"
-    else
-      log_message "2.3 Skipped chrony install: system appears to be offline"
-    fi
+# === Choose your preferred time sync daemon ===
+TIME_SYNC_DAEMON="chrony"  # Options: chrony or systemd-timesyncd
 
-    # Disable systemd-timesyncd
-    if systemctl is-active systemd-timesyncd.service &>/dev/null; then
-      run_command "systemctl stop systemd-timesyncd.service" "2.3 Stop systemd-timesyncd"
-    else
-      log_message "2.3 systemd-timesyncd is not active — no need to stop"
-    fi
-    run_command "systemctl mask systemd-timesyncd.service" "2.3 Mask systemd-timesyncd"
+# ---------------------[ 2.3.1 Ensure time synchronization is in use ]---------------------
+start_section "2.3.1"
+log_message "2.3.1 Ensure time synchronization is in use"
 
-    # Set timezone
-    run_command "timedatectl set-timezone Asia/Tehran" "2.3 Set timezone to Asia/Tehran"
+if [[ "$TIME_SYNC_DAEMON" == "chrony" ]]; then
 
-    # Configure chrony
-    CHRONY_CONF="/etc/chrony/chrony.conf"
-    CHRONY_POOL="pool asia.pool.ntp.org iburst"
-    if ! grep -qE '^server|^pool' "$CHRONY_CONF"; then
-      run_command "echo '${CHRONY_POOL}' >> ${CHRONY_CONF}" "2.3 Configure chrony with NTP pool"
-    fi
+  # ---------------------[ 2.3.1.1 Ensure a single time synchronization daemon is in use ]---------------------
+  start_section "2.3.1.1"
+  run_command "systemctl mask systemd-timesyncd.service" "2.3.1.1 Mask systemd-timesyncd to avoid conflict"
 
-    # Ensure chrony runs as _chrony
-    CHRONY_SERVICE="/lib/systemd/system/chrony.service"
-    if grep -q '^User=' "$CHRONY_SERVICE"; then
-      run_command "sed -i 's/^User=.*/User=_chrony/' $CHRONY_SERVICE" "2.3 Ensure chrony runs as _chrony"
-    else
-      run_command "sed -i '/^
+  # ---------------------[ 2.3.3 Configure chrony ]---------------------
+  start_section "2.3.3"
+  run_command "timedatectl set-timezone Asia/Tehran" "2.3.3 Set timezone to Asia/Tehran"
+
+  # ---------------------[ 2.3.3.0 Install chrony ]---------------------
+  start_section "2.3.3.0"
+  if is_online; then
+    run_command "apt update && apt install -y chrony" "2.3.3.0 Install chrony"
+  else
+    log_message "2.3.3.0 Skipped chrony install: system appears to be offline"
+  fi
+
+  # ---------------------[ 2.3.3.1 Ensure chrony is configured with authorized timeserver ]---------------------
+  start_section "2.3.3.1"
+  CHRONY_CONF="/etc/chrony/chrony.conf"
+  CHRONY_POOL="pool asia.pool.ntp.org iburst"
+  if ! grep -qE '^server|^pool' "$CHRONY_CONF"; then
+    run_command "echo '${CHRONY_POOL}' >> ${CHRONY_CONF}" "2.3.3.1 Configure chrony with NTP pool"
+  fi
+
+  # ---------------------[ 2.3.3.2 Ensure chrony is running as user _chrony ]---------------------
+  start_section "2.3.3.2"
+  CHRONY_SERVICE="/lib/systemd/system/chrony.service"
+  if grep -q '^User=' "$CHRONY_SERVICE"; then
+    run_command "sed -i 's/^User=.*/User=_chrony/' $CHRONY_SERVICE" "2.3.3.2 Ensure chrony runs as _chrony"
+  else
+    run_command "sed -i '/^
 
 \[Service\]
 
-/a User=_chrony' $CHRONY_SERVICE" "2.3 Add User=_chrony to chrony.service"
-    fi
+/a User=_chrony' $CHRONY_SERVICE" "2.3.3.2 Add User=_chrony to chrony.service"
+  fi
 
-    run_command "systemctl daemon-reexec" "2.3 Reload systemd daemon"
-    run_command "systemctl enable chrony" "2.3 Enable chrony"
-    run_command "systemctl restart chrony" "2.3 Restart chrony"
+  # ---------------------[ 2.3.3.3 Ensure chrony is enabled and running ]---------------------
+  start_section "2.3.3.3"
+  run_command "systemctl daemon-reexec" "2.3.3.3 Reload systemd daemon"
+  run_command "systemctl enable chrony" "2.3.3.3 Enable chrony"
+  run_command "systemctl restart chrony" "2.3.3.3 Restart chrony"
 
-  elif [[ "$TIME_SYNC_DAEMON" == "systemd-timesyncd" ]]; then
-    # ---------------------[ systemd-timesyncd Setup ]---------------------
-    if is_online; then
-      run_command "apt purge -y chrony" "2.3 Remove chrony"
-      run_command "apt autoremove -y chrony" "2.3 Autoremove chrony dependencies"
-    else
-      log_message "2.3 Skipped chrony removal: system appears to be offline"
-    fi
+elif [[ "$TIME_SYNC_DAEMON" == "systemd-timesyncd" ]]; then
 
-    # Set timezone
-    run_command "timedatectl set-timezone Asia/Tehran" "2.3 Set timezone to Asia/Tehran"
+  # ---------------------[ 2.3.1.1 Ensure a single time synchronization daemon is in use ]---------------------
+  start_section "2.3.1.1"
+  run_command "apt purge -y chrony && apt autoremove -y chrony" "2.3.1.1 Remove chrony to avoid conflict"
 
-    # Configure systemd-timesyncd
-    TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
-    TIMESERVER="pool asia.pool.ntp.org"
-    if grep -q "^NTP=" "$TIMESYNC_CONF"; then
-      run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3 Update NTP server in timesyncd.conf"
-    else
-      run_command "sed -i '/^
+  # ---------------------[ 2.3.2 Configure systemd-timesyncd ]---------------------
+  start_section "2.3.2"
+  run_command "timedatectl set-timezone Asia/Tehran" "2.3.2 Set timezone to Asia/Tehran"
+
+  # ---------------------[ 2.3.2.1 Ensure systemd-timesyncd configured with authorized timeserver ]---------------------
+  start_section "2.3.2.1"
+  TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
+  TIMESERVER="pool asia.pool.ntp.org"
+  if grep -q "^NTP=" "$TIMESYNC_CONF"; then
+    run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3.2.1 Update NTP server in timesyncd.conf"
+  else
+    run_command "sed -i '/^
 
 \[Time\]
 
-/a NTP=${TIMESERVER}' $TIMESYNC_CONF" "2.3 Add NTP server to timesyncd.conf"
-    fi
-
-    run_command "systemctl enable systemd-timesyncd" "2.3 Enable systemd-timesyncd"
-    run_command "systemctl start systemd-timesyncd" "2.3 Start systemd-timesyncd"
+/a NTP=${TIMESERVER}' $TIMESYNC_CONF" "2.3.2.1 Add NTP server to timesyncd.conf"
   fi
+
+  # ---------------------[ 2.3.2.2 Ensure systemd-timesyncd is enabled and running ]---------------------
+  start_section "2.3.2.2"
+  run_command "systemctl enable systemd-timesyncd" "2.3.2.2 Enable systemd-timesyncd"
+  run_command "systemctl start systemd-timesyncd" "2.3.2.2 Start systemd-timesyncd"
+
 fi
 
+fi
 
 
 #####################################################################################
