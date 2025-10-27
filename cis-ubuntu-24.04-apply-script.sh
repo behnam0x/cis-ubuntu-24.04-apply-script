@@ -233,17 +233,11 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.1" ]]; then
   run_command "mount -a" "Apply updated mount options from /etc/fstab"
 fi
 
+###############################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.2" ]]; then
 
   # =====================[ SECTION 1.2.1.1: Ensure GPG keys are configured ]=====================
   start_section "1.2.1.1"
-
-  # Check for configured GPG keys in apt-key keyring
-  if apt-key list 2>/dev/null | grep -q "pub"; then
-    log_message "1.2.1.1 GPG keys are present in apt-key keyring"
-  else
-    log_message "1.2.1.1 No GPG keys found in apt-key keyring — manual review required"
-  fi
 
   # Check for GPG key files in trusted.gpg.d
   if find /etc/apt/trusted.gpg.d/ -type f -name '*.gpg' | grep -q .; then
@@ -257,8 +251,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.2" ]]; then
   # =====================[ SECTION 1.2.1.2: Ensure package manager repositories are configured ]=====================
   start_section "1.2.1.2"
 
-  # List configured APT repositories
-  run_command "grep -h ^deb /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null" "1.2.1.2 List configured APT repositories"
+  run_command "find /etc/apt/ -name '*.list' -exec grep -h ^deb {} \;" "1.2.1.2 List configured APT repositories"
 
   log_message "1.2.1.2 Manual remediation: Review and configure repositories according to site policy"
 
@@ -269,6 +262,11 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.2" ]]; then
     local CMD="$1"
     local LABEL="$2"
     local LOG="/tmp/apt_output.log"
+
+    if ! command -v timeout &>/dev/null; then
+      log_message "$LABEL Skipped: 'timeout' command not available"
+      return
+    fi
 
     timeout 60 bash -c "$CMD" > "$LOG" 2>&1
     local EXIT_CODE=$?
@@ -293,9 +291,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.2" ]]; then
   log_message "1.2.2.1 Manual review: Confirm updates and patches align with site policy"
 fi
 
-
-
-########################################################################################
+#############################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.3" ]]; then
 
  # =====================[ SECTION 1.3.1.1: Ensure AppArmor is installed ]=====================
@@ -2984,15 +2980,19 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   # =====================[ SECTION 5.4.3.2: Ensure default user shell timeout is configured ]=====================
   start_section "5.4.3.2"
   
-  # Remove any existing TMOUT lines and append secure configuration to /etc/profile
-  run_command "sed -i '/TMOUT=/d' /etc/profile && echo -e '\nTMOUT=900\nreadonly TMOUT\nexport TMOUT' >> /etc/profile" "5.4.3.2 Set TMOUT to 900 in /etc/profile"
+  # Secure TMOUT configuration block
+  TMOUT_CONFIG=$'\n# Set TMOUT only if not already defined\nif [ -z "$TMOUT" ]; then\n  TMOUT=900\n  readonly TMOUT\n  export TMOUT\nfi\n'
   
-  # Remove any existing TMOUT lines and append secure configuration to /etc/bashrc
-  run_command "sed -i '/TMOUT=/d' /etc/bashrc && echo -e '\nTMOUT=900\nreadonly TMOUT\nexport TMOUT' >> /etc/bashrc" "5.4.3.2 Set TMOUT to 900 in /etc/bashrc"
+  # Remove any existing TMOUT lines and append secure block to /etc/profile
+  run_command "sed -i '/TMOUT=/d' /etc/profile && echo \"$TMOUT_CONFIG\" >> /etc/profile" "5.4.3.2 Set TMOUT block in /etc/profile"
   
-  # Remove any existing TMOUT lines and append secure configuration to all *.sh files in /etc/profile.d
-  run_command "find /etc/profile.d/ -type f -name '*.sh' -exec sed -i '/TMOUT=/d' {} + -exec bash -c 'echo -e \"\\nTMOUT=900\\nreadonly TMOUT\\nexport TMOUT\" >> {}' \\;" "5.4.3.2 Set TMOUT to 900 in /etc/profile.d/*.sh"
+  # Create or overwrite /etc/profile.d/timeout.sh with the secure block
+  run_command "echo \"$TMOUT_CONFIG\" > /etc/profile.d/timeout.sh" "5.4.3.2 Create /etc/profile.d/timeout.sh with TMOUT block"
   
+  # Ensure correct permissions
+  run_command "chmod 644 /etc/profile.d/timeout.sh" "5.4.3.2 Set permissions on timeout.sh"
+  run_command "chown root:root /etc/profile.d/timeout.sh" "5.4.3.2 Set ownership on timeout.sh"
+
   # =====================[ SECTION 5.4.3.3: Ensure default user umask is configured ]=====================
   start_section "5.4.3.3"
   
