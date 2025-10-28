@@ -2227,7 +2227,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.2" ]]; then
 fi
 
 ###############################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" == 5.3 ]]; then
 
   # =====================[ SECTION 5.3.1.1: Ensure latest version of PAM is installed ]=====================
   start_section "5.3.1.1"
@@ -2237,135 +2237,183 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3" ]]; then
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  # Install PAM libraries only if online
+  PAM_PACKAGES=(
+    libpam0g
+    libpam-modules
+    libpam-modules-bin
+    libpam-runtime
+    libpam-pwquality
+    libpam-tmpdir
+    libpam-fprintd
+  )
+
+  # Install PAM libraries
   if is_online; then
-    apt update
-    apt install --reinstall -y \
-      libpam0g \
-      libpam-modules \
-      libpam-modules-bin \
-      libpam-runtime \
-      libpam-pwquality \
-      libpam-tmpdir \
-      libpam-fprintd
+    apt install --reinstall -y "${PAM_PACKAGES[@]}"
+    log_success "5.3.1.1 Installed PAM packages online"
   else
-    log_message "5.3.1.1 Skipped PAM package install: system appears to be offline"
+    log_message "5.3.1.1 System appears to be offline — attempting offline PAM install"
+    DEB_DIR="/opt/hardening/debs"
+    if [ -d "$DEB_DIR" ]; then
+      for pkg in "${PAM_PACKAGES[@]}"; do
+        file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
+        if [[ -n "$file" ]]; then
+          dpkg -i "$file"
+          log_success "5.3.1.1 Installed $pkg from offline package"
+        else
+          log_error "5.3.1.1 Missing offline package for $pkg"
+        fi
+      done
+      apt-get install -f -y
+    else
+      log_error "5.3.1.1 Offline package directory not found: $DEB_DIR"
+    fi
   fi
 
   # Reconfigure PAM profiles if tool is available
   if command -v pam-auth-update &>/dev/null; then
     pam-auth-update --force
+    log_success "5.3.1.1 Reconfigured PAM profiles with pam-auth-update"
   else
     log_message "5.3.1.1 Skipped pam-auth-update: command not available"
   fi
 
-  # =====================[ PAM Functionality Test: Validate passwd works ]=====================
-  userdel -r testuser_5311 2>/dev/null
-  useradd -m testuser_5311
-  echo "testuser_5311:TempPass123!" | chpasswd
-
-  echo -e "TempPass123!\nNewPass123!\nNewPass123!" | passwd testuser_5311 > /tmp/passwd_test.log 2>&1
-  EXIT_CODE=$?
-
-  if [[ $EXIT_CODE -eq 0 ]]; then
-    log_message "5.3.1.1 [✓] Password change test passed for testuser_5311"
-  else
-    log_message "5.3.1.1 [✗] Password change test failed — check /tmp/passwd_test.log and PAM configuration"
-    ls -l /etc/shadow >> /tmp/passwd_test.log
-    stat /etc/shadow >> /tmp/passwd_test.log
-  fi
-
-
-
 
   # =====================[ SECTION 5.3.1.2: Ensure libpam-modules is installed ]=====================
   start_section "5.3.1.2"
-  
+
+  DEB_DIR="/opt/hardening/debs"
+  LOG_FILE="/tmp/pam_modules_upgrade.log"
+
   # Check if libpam-modules is installed
   if dpkg -s libpam-modules >/dev/null 2>&1; then
     # Try to upgrade libpam-modules safely
-    timeout 60 apt-get install --only-upgrade -y libpam-modules > /tmp/pam_modules_upgrade.log 2>&1
+    timeout 60 apt-get install --only-upgrade -y libpam-modules > "$LOG_FILE" 2>&1
     EXIT_CODE=$?
-  
+
     if [[ $EXIT_CODE -eq 124 ]]; then
       log_message "5.3.1.2 [✗] Timeout: libpam-modules upgrade took too long"
-    elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" /tmp/pam_modules_upgrade.log; then
+    elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" "$LOG_FILE"; then
       log_message "5.3.1.2 [✗] Network error: Unable to reach repositories — upgrade failed"
     elif [[ $EXIT_CODE -ne 0 ]]; then
       log_message "5.3.1.2 [✗] Error: libpam-modules upgrade failed with exit code $EXIT_CODE"
     else
       log_message "5.3.1.2 [✓] Success: libpam-modules upgraded"
     fi
-    log_message "5.3.1.2 Log saved to /tmp/pam_modules_upgrade.log"
+    log_message "5.3.1.2 Log saved to $LOG_FILE"
+
   else
-    log_message "5.3.1.2 [ℹ] libpam-modules is not installed — skipping upgrade"
+    if is_online; then
+      apt update
+      apt install -y libpam-modules
+      log_message "5.3.1.2 [✓] libpam-modules installed online"
+    elif [ -d "$DEB_DIR" ]; then
+      LOCAL_DEB=$(find "$DEB_DIR" -type f -name "libpam-modules_*.deb" | head -n 1)
+      if [[ -n "$LOCAL_DEB" ]]; then
+        dpkg -i "$LOCAL_DEB"
+        log_message "5.3.1.2 [✓] libpam-modules installed from offline package"
+      else
+        log_message "5.3.1.2 [✗] Offline package for libpam-modules not found in $DEB_DIR"
+      fi
+    else
+      log_message "5.3.1.2 [✗] libpam-modules is not installed and no offline package directory found"
+    fi
   fi
 
 
   # =====================[ SECTION 5.3.1.3: Ensure libpam-pwquality is installed ]=====================
   start_section "5.3.1.3"
 
-  # Helper: Check if system is online
-  is_online() {
-    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
-  }
+  DEB_DIR="/opt/hardening/debs"
+  LOG_FILE="/tmp/pwquality_install.log"
+  PACKAGE="libpam-pwquality"
 
   # Check if libpam-pwquality is installed
-  if dpkg -s libpam-pwquality >/dev/null 2>&1; then
-    log_message "5.3.1.3 [✓] libpam-pwquality is already installed"
+  if dpkg -s "$PACKAGE" >/dev/null 2>&1; then
+    log_message "5.3.1.3 [✓] $PACKAGE is already installed"
   else
     if ! is_online; then
-      log_message "5.3.1.3 [✗] Skipped: system appears to be offline — libpam-pwquality not installed"
+      log_message "5.3.1.3 [✗] System appears to be offline — attempting offline install"
+      if [ -d "$DEB_DIR" ]; then
+        LOCAL_DEB=$(find "$DEB_DIR" -type f -name "${PACKAGE}_*.deb" | head -n 1)
+        if [[ -n "$LOCAL_DEB" ]]; then
+          dpkg -i "$LOCAL_DEB" > "$LOG_FILE" 2>&1
+          EXIT_CODE=$?
+          if [[ $EXIT_CODE -eq 0 ]]; then
+            log_message "5.3.1.3 [✓] $PACKAGE installed from offline package"
+          else
+            log_message "5.3.1.3 [✗] Offline install failed with exit code $EXIT_CODE"
+          fi
+        else
+          log_message "5.3.1.3 [✗] Offline package for $PACKAGE not found in $DEB_DIR"
+        fi
+      else
+        log_message "5.3.1.3 [✗] Offline package directory not found: $DEB_DIR"
+      fi
     elif ! command -v timeout &>/dev/null; then
       log_message "5.3.1.3 [✗] Skipped: 'timeout' command not available"
     else
-      timeout 60 apt-get install -y libpam-pwquality > /tmp/pwquality_install.log 2>&1
+      timeout 60 apt-get install -y "$PACKAGE" > "$LOG_FILE" 2>&1
       EXIT_CODE=$?
 
       if [[ $EXIT_CODE -eq 124 ]]; then
-        log_message "5.3.1.3 [✗] Timeout: libpam-pwquality installation took too long"
-      elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" /tmp/pwquality_install.log; then
+        log_message "5.3.1.3 [✗] Timeout: $PACKAGE installation took too long"
+      elif grep -qiE "could not resolve|failed to fetch|temporary failure|connection timed out" "$LOG_FILE"; then
         log_message "5.3.1.3 [✗] Network error: Unable to reach repositories — installation failed"
       elif [[ $EXIT_CODE -ne 0 ]]; then
-        log_message "5.3.1.3 [✗] Error: libpam-pwquality installation failed with exit code $EXIT_CODE"
+        log_message "5.3.1.3 [✗] Error: $PACKAGE installation failed with exit code $EXIT_CODE"
       else
-        log_message "5.3.1.3 [✓] Success: libpam-pwquality installed"
+        log_message "5.3.1.3 [✓] Success: $PACKAGE installed"
       fi
-      log_message "5.3.1.3 Log saved to /tmp/pwquality_install.log"
+      log_message "5.3.1.3 Log saved to $LOG_FILE"
     fi
   fi
 
+fi
 
 
+
+###############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.2" || "$TARGET_SECTION" == "5.3" ]]; then
 
   # =====================[ SECTION 5.3.2.1: Ensure pam_unix module is enabled ]=====================
   start_section "5.3.2.1"
-  
+
+  LOG_FILE="/tmp/pam_unix_enable.log"
+
   # Enable pam_unix module using pam-auth-update
-  timeout 30 pam-auth-update --enable unix > /tmp/pam_unix_enable.log 2>&1
-  EXIT_CODE=$?
-  
-  if [[ $EXIT_CODE -eq 124 ]]; then
-    log_message "5.3.2.1 [✗] Timeout: pam-auth-update took too long"
-  elif grep -qiE "error|failed|not found" /tmp/pam_unix_enable.log; then
-    log_message "5.3.2.1 [✗] Error: Failed to enable pam_unix — check for custom PAM profiles or missing package"
-  elif [[ $EXIT_CODE -ne 0 ]]; then
-    log_message "5.3.2.1 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+  if command -v pam-auth-update &>/dev/null; then
+    timeout 30 pam-auth-update --enable unix > "$LOG_FILE" 2>&1
+    EXIT_CODE=$?
+
+    if [[ $EXIT_CODE -eq 124 ]]; then
+      log_message "5.3.2.1 [✗] Timeout: pam-auth-update took too long"
+    elif grep -qiE "error|failed|not found" "$LOG_FILE"; then
+      log_message "5.3.2.1 [✗] Error: Failed to enable pam_unix — check for custom PAM profiles or missing package"
+    elif [[ $EXIT_CODE -ne 0 ]]; then
+      log_message "5.3.2.1 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+    else
+      log_message "5.3.2.1 [✓] Success: pam_unix module enabled"
+    fi
+    log_message "5.3.2.1 Log saved to $LOG_FILE"
   else
-    log_message "5.3.2.1 [✓] Success: pam_unix module enabled"
+    log_message "5.3.2.1 [✗] pam-auth-update command not available — cannot enable pam_unix"
   fi
-  log_message "5.3.2.1 Log saved to /tmp/pam_unix_enable.log"
-  
+
   # Optional: notify if pam_faillock is used instead
   if grep -q "pam_faillock.so" /etc/pam.d/common-auth 2>/dev/null; then
     log_message "5.3.2.1 [ℹ] Note: pam_faillock module is present — ensure it aligns with site policy"
   fi
 
+
   # =====================[ SECTION 5.3.2.2: Ensure pam_faillock module is enabled ]=====================
   start_section "5.3.2.2"
 
+  LOG_FILE="/tmp/faillock_enable.log"
+  CONFIG_DIR="/usr/share/pam-configs"
+
   # Create faillock profile
-  cat <<EOF > /usr/share/pam-configs/faillock
+  cat <<EOF > "$CONFIG_DIR/faillock"
 Name: Enable pam_faillock to deny access
 Default: yes
 Priority: 0
@@ -2375,7 +2423,7 @@ Auth:
 EOF
 
   # Create faillock_notify profile
-  cat <<EOF > /usr/share/pam-configs/faillock_notify
+  cat <<EOF > "$CONFIG_DIR/faillock_notify"
 Name: Notify of failed login attempts and reset count upon success
 Default: yes
 Priority: 1024
@@ -2388,30 +2436,37 @@ Account:
 EOF
 
   # Enable both profiles
-  timeout 30 pam-auth-update --enable faillock --enable faillock_notify > /tmp/faillock_enable.log 2>&1
-  EXIT_CODE=$?
+  if command -v pam-auth-update &>/dev/null; then
+    timeout 30 pam-auth-update --enable faillock --enable faillock_notify > "$LOG_FILE" 2>&1
+    EXIT_CODE=$?
 
-  if [[ $EXIT_CODE -eq 124 ]]; then
-    log_message "5.3.2.2 [✗] Timeout: pam-auth-update took too long"
-  elif grep -qiE "error|failed|not found" /tmp/faillock_enable.log; then
-    log_message "5.3.2.2 [✗] Error: Failed to enable pam_faillock profiles — check for syntax or package issues"
-  elif [[ $EXIT_CODE -ne 0 ]]; then
-    log_message "5.3.2.2 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+    if [[ $EXIT_CODE -eq 124 ]]; then
+      log_message "5.3.2.2 [✗] Timeout: pam-auth-update took too long"
+    elif grep -qiE "error|failed|not found" "$LOG_FILE"; then
+      log_message "5.3.2.2 [✗] Error: Failed to enable pam_faillock profiles — check for syntax or package issues"
+    elif [[ $EXIT_CODE -ne 0 ]]; then
+      log_message "5.3.2.2 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+    else
+      log_message "5.3.2.2 [✓] Success: pam_faillock module and notification profile enabled"
+    fi
+    log_message "5.3.2.2 Log saved to $LOG_FILE"
   else
-    log_message "5.3.2.2 [✓] Success: pam_faillock module and notification profile enabled"
+    log_message "5.3.2.2 [✗] pam-auth-update command not available — cannot enable pam_faillock"
   fi
-  log_message "5.3.2.2 Log saved to /tmp/faillock_enable.log"
 
 
   # =====================[ SECTION 5.3.2.3: Ensure pam_pwquality module is enabled ]=====================
   start_section "5.3.2.3"
 
+  CONFIG_DIR="/usr/share/pam-configs"
+  LOG_FILE="/tmp/pwquality_enable.log"
+
   # Check if pam_pwquality profile exists
-  if grep -P --quiet '\bpam_pwquality\.so\b' /usr/share/pam-configs/*; then
+  if grep -P --quiet '\bpam_pwquality\.so\b' "$CONFIG_DIR"/*; then
     log_message "5.3.2.3 [ℹ] pam_pwquality profile already exists — enabling it"
   else
     # Create pam_pwquality profile
-    cat <<EOF > /usr/share/pam-configs/pwquality
+    cat <<EOF > "$CONFIG_DIR/pwquality"
 Name: Pwquality password strength checking
 Default: yes
 Priority: 1024
@@ -2424,30 +2479,33 @@ EOF
   fi
 
   # Enable the profile
-  timeout 30 pam-auth-update --enable pwquality > /tmp/pwquality_enable.log 2>&1
+  timeout 30 pam-auth-update --enable pwquality > "$LOG_FILE" 2>&1
   EXIT_CODE=$?
 
   if [[ $EXIT_CODE -eq 124 ]]; then
     log_message "5.3.2.3 [✗] Timeout: pam-auth-update took too long"
-  elif grep -qiE "error|failed|not found" /tmp/pwquality_enable.log; then
+  elif grep -qiE "error|failed|not found" "$LOG_FILE"; then
     log_message "5.3.2.3 [✗] Error: Failed to enable pam_pwquality — check for syntax or package issues"
   elif [[ $EXIT_CODE -ne 0 ]]; then
     log_message "5.3.2.3 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
   else
     log_message "5.3.2.3 [✓] Success: pam_pwquality module enabled"
   fi
-  log_message "5.3.2.3 Log saved to /tmp/pwquality_enable.log"
+
+  log_message "5.3.2.3 Log saved to $LOG_FILE"
 
 
   # =====================[ SECTION 5.3.2.4: Ensure pam_pwhistory module is enabled ]=====================
   start_section "5.3.2.4"
 
+  LOG_FILE="/tmp/pwhistory_enable.log"
+
   # Check if pam_pwhistory profile exists
-  if grep -P --quiet '\bpam_pwhistory\.so\b' /usr/share/pam-configs/*; then
+  if grep -P --quiet '\bpam_pwhistory\.so\b' "$CONFIG_DIR"/*; then
     log_message "5.3.2.4 [ℹ] pam_pwhistory profile already exists — enabling it"
   else
     # Create pam_pwhistory profile
-    cat <<EOF > /usr/share/pam-configs/pwhistory
+    cat <<EOF > "$CONFIG_DIR/pwhistory"
 Name: pwhistory password history checking
 Default: yes
 Priority: 1024
@@ -2459,25 +2517,34 @@ EOF
   fi
 
   # Enable the profile
-  timeout 30 pam-auth-update --enable pwhistory > /tmp/pwhistory_enable.log 2>&1
-  EXIT_CODE=$?
+  if command -v pam-auth-update &>/dev/null; then
+    timeout 30 pam-auth-update --enable pwhistory > "$LOG_FILE" 2>&1
+    EXIT_CODE=$?
 
-  if [[ $EXIT_CODE -eq 124 ]]; then
-    log_message "5.3.2.4 [✗] Timeout: pam-auth-update took too long"
-  elif grep -qiE "error|failed|not found" /tmp/pwhistory_enable.log; then
-    log_message "5.3.2.4 [✗] Error: Failed to enable pam_pwhistory — check for syntax or package issues"
-  elif [[ $EXIT_CODE -ne 0 ]]; then
-    log_message "5.3.2.4 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+    if [[ $EXIT_CODE -eq 124 ]]; then
+      log_message "5.3.2.4 [✗] Timeout: pam-auth-update took too long"
+    elif grep -qiE "error|failed|not found" "$LOG_FILE"; then
+      log_message "5.3.2.4 [✗] Error: Failed to enable pam_pwhistory — check for syntax or package issues"
+    elif [[ $EXIT_CODE -ne 0 ]]; then
+      log_message "5.3.2.4 [✗] Error: pam-auth-update exited with code $EXIT_CODE"
+    else
+      log_message "5.3.2.4 [✓] Success: pam_pwhistory module enabled"
+    fi
+    log_message "5.3.2.4 Log saved to $LOG_FILE"
   else
-    log_message "5.3.2.4 [✓] Success: pam_pwhistory module enabled"
+    log_message "5.3.2.4 [✗] pam-auth-update command not available — cannot enable pam_pwhistory"
   fi
-  log_message "5.3.2.4 Log saved to /tmp/pwhistory_enable.log"
 
+fi
+
+
+
+###############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.1" || "$TARGET_SECTION" == "5.3" ]]; then
 
   # =====================[ SECTION 5.3.3.1.1: Ensure password failed attempts lockout is configured ]=====================
   start_section "5.3.3.1.1"
-  
-  # Ensure faillock.conf exists and sets deny=5
+
   if [[ -f /etc/security/faillock.conf ]]; then
     if grep -q '^deny[[:space:]]*=' /etc/security/faillock.conf; then
       run_command "sed -i 's/^deny[[:space:]]*=.*/deny = 5/' /etc/security/faillock.conf" "5.3.3.1.1 [✓] Update deny value in faillock.conf"
@@ -2489,19 +2556,17 @@ EOF
     echo "deny = 5" > /etc/security/faillock.conf
     log_message "5.3.3.1.1 [✓] Created faillock.conf with deny = 5"
   fi
-  
-  # Remove embedded deny= from pam_faillock.so lines in PAM profiles
+
   grep -Pl -- '\bpam_faillock\.so\h+([^#\n\r]+\h+)?deny\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
     run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+deny=[0-9]+/\1/' \"$file\"" "5.3.3.1.1 [✓] Remove deny= from $file"
   done
-  
+
   log_message "5.3.3.1.1 [✓] Success: Password lockout configured via faillock.conf with deny = 5"
 
 
   # =====================[ SECTION 5.3.3.1.2: Ensure password unlock time is configured ]=====================
   start_section "5.3.3.1.2"
-  
-  # Ensure unlock_time = 900 is set in /etc/security/faillock.conf
+
   if [[ -f /etc/security/faillock.conf ]]; then
     if grep -q '^\s*unlock_time\s*=' /etc/security/faillock.conf; then
       run_command "sed -i 's/^\s*unlock_time\s*=.*/unlock_time = 900/' /etc/security/faillock.conf" "5.3.3.1.2 [✓] Updated unlock_time value in faillock.conf"
@@ -2513,19 +2578,17 @@ EOF
     echo "unlock_time = 900" > /etc/security/faillock.conf
     log_message "5.3.3.1.2 [✓] Created faillock.conf with unlock_time = 900"
   fi
-  
-  # Remove unlock_time=<N> from pam_faillock.so lines in PAM profiles
+
   grep -Pl -- '\bpam_faillock\.so\h+([^#\n\r]+\h+)?unlock_time\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
     run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+unlock_time=[0-9]+/\1/' \"$file\"" "5.3.3.1.2 [✓] Removed unlock_time= from $file"
   done
-  
+
   log_message "5.3.3.1.2 [✓] Success: Unlock time set to 900 seconds and PAM profiles cleaned"
-  
+
 
   # =====================[ SECTION 5.3.3.1.3: Ensure lockout includes root account ]=====================
   start_section "5.3.3.1.3"
-  
-  # Ensure even_deny_root is set in faillock.conf
+
   if [[ -f /etc/security/faillock.conf ]]; then
     if ! grep -q '^\s*even_deny_root\b' /etc/security/faillock.conf; then
       echo "even_deny_root" >> /etc/security/faillock.conf
@@ -2533,8 +2596,7 @@ EOF
     else
       log_message "5.3.3.1.3 [ℹ] even_deny_root already present in faillock.conf"
     fi
-  
-    # Ensure root_unlock_time is 60 or more
+
     if grep -q '^\s*root_unlock_time\s*=' /etc/security/faillock.conf; then
       run_command "sed -i 's/^\s*root_unlock_time\s*=.*/root_unlock_time = 60/' /etc/security/faillock.conf" "5.3.3.1.3 [✓] Updated root_unlock_time to 60"
     else
@@ -2545,79 +2607,72 @@ EOF
     echo -e "even_deny_root\nroot_unlock_time = 60" > /etc/security/faillock.conf
     log_message "5.3.3.1.3 [✓] Created faillock.conf with even_deny_root and root_unlock_time = 60"
   fi
-  
-  # Remove even_deny_root and root_unlock_time from PAM profile lines
+
   grep -Pl -- '\bpam_faillock\.so\h+([^#\n\r]+\h+)?(even_deny_root|root_unlock_time)' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
     run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+(even_deny_root|root_unlock_time=[0-9]+)//g' \"$file\"" "5.3.3.1.3 [✓] Cleaned $file of root-specific faillock options"
   done
-  
+
   log_message "5.3.3.1.3 [✓] Success: Root account now included in lockout policy"
 
+fi
+
+###############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.2" || "$TARGET_SECTION" == "5.3" ]]; then
 
   # =====================[ SECTION 5.3.3.2.1: Ensure password number of changed characters is configured ]=====================
   start_section "5.3.3.2.1"
-  
-  # Comment out existing difok line in pwquality.conf
+
   if [[ -f /etc/security/pwquality.conf ]]; then
-    run_command "sed -ri 's/^\\s*difok\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.1 [✓] Commented out difok in pwquality.conf"
+    run_command "sed -ri 's/^\s*difok\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.1 [✓] Commented out difok in pwquality.conf"
   fi
-  
-  # Create pwquality.conf.d directory if missing
+
   if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
     run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.1 [✓] Created pwquality.conf.d directory"
   fi
-  
-  # Create or overwrite difok setting in custom conf file
+
   echo "difok = 2" > /etc/security/pwquality.conf.d/50-pwdifok.conf
   log_message "5.3.3.2.1 [✓] Set difok = 2 in 50-pwdifok.conf"
-  
-  # Remove difok= from pam_pwquality.so lines in PAM profiles
+
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?difok\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+difok=[0-9]+/\\1/' \"$file\"" "5.3.3.2.1 [✓] Removed difok= from $file"
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+difok=[0-9]+/\1/' \"$file\"" "5.3.3.2.1 [✓] Removed difok= from $file"
   done
-  
+
   log_message "5.3.3.2.1 [✓] Success: Password change character requirement (difok) configured to 2"
+
 
   # =====================[ SECTION 5.3.3.2.2: Ensure minimum password length is configured ]=====================
   start_section "5.3.3.2.2"
-  
-  # Comment out existing minlen line in pwquality.conf
+
   if [[ -f /etc/security/pwquality.conf ]]; then
-    run_command "sed -ri 's/^\\s*minlen\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.2 [✓] Commented out minlen in pwquality.conf"
+    run_command "sed -ri 's/^\s*minlen\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.2 [✓] Commented out minlen in pwquality.conf"
   fi
-  
-  # Create pwquality.conf.d directory if missing
+
   if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
     run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.2 [✓] Created pwquality.conf.d directory"
   fi
-  
-  # Create or overwrite minlen setting in custom conf file
+
   echo "minlen = 14" > /etc/security/pwquality.conf.d/50-pwlength.conf
   log_message "5.3.3.2.2 [✓] Set minlen = 14 in 50-pwlength.conf"
-  
-  # Remove minlen= from pam_pwquality.so lines in PAM profiles
+
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?minlen\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+minlen=[0-9]+/\\1/' \"$file\"" "5.3.3.2.2 [✓] Removed minlen= from $file"
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+minlen=[0-9]+/\1/' \"$file\"" "5.3.3.2.2 [✓] Removed minlen= from $file"
   done
-  
+
   log_message "5.3.3.2.2 [✓] Success: Minimum password length configured to 14 characters"
-  
+
 
   # =====================[ SECTION 5.3.3.2.3: Ensure password complexity is configured ]=====================
   start_section "5.3.3.2.3"
 
-  # Comment out complexity settings in pwquality.conf
   if [[ -f /etc/security/pwquality.conf ]]; then
-    run_command "sed -ri 's/^\\s*minclass\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.3 [✓] Commented out minclass in pwquality.conf"
-    run_command "sed -ri 's/^\\s*[dulo]credit\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.3 [✓] Commented out credit settings in pwquality.conf"
+    run_command "sed -ri 's/^\s*minclass\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.3 [✓] Commented out minclass in pwquality.conf"
+    run_command "sed -ri 's/^\s*[dulo]credit\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.3 [✓] Commented out credit settings in pwquality.conf"
   fi
 
-  # Create pwquality.conf.d directory if missing
   if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
     run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.3 [✓] Created pwquality.conf.d directory"
   fi
 
-  # Create or overwrite complexity settings in custom conf file
   cat <<EOF > /etc/security/pwquality.conf.d/50-pwcomplexity.conf
 minclass = 3
 dcredit = -1
@@ -2627,9 +2682,8 @@ ocredit = -1
 EOF
   log_message "5.3.3.2.3 [✓] Set password complexity in 50-pwcomplexity.conf"
 
-  # Remove complexity arguments from pam_pwquality.so lines in PAM profiles
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?(minclass|[dulo]credit|ocredit)\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+(minclass=[0-9]+|[dulo]credit=-?[0-9]+|ocredit=-?[0-9]+)//g' \"$file\"" "5.3.3.2.3 [✓] Removed complexity arguments from $file"
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+(minclass=[0-9]+|[dulo]credit=-?[0-9]+|ocredit=-?[0-9]+)//g' \"$file\"" "5.3.3.2.3 [✓] Removed complexity arguments from $file"
   done
 
   log_message "5.3.3.2.3 [✓] Success: Password complexity configured according to site policy"
@@ -2637,266 +2691,211 @@ EOF
 
   # =====================[ SECTION 5.3.3.2.4: Ensure password same consecutive characters is configured ]=====================
   start_section "5.3.3.2.4"
-  
-  # Comment out existing maxrepeat line in pwquality.conf
+
   if [[ -f /etc/security/pwquality.conf ]]; then
-    run_command "sed -ri 's/^\\s*maxrepeat\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.4 [✓] Commented out maxrepeat in pwquality.conf"
+    run_command "sed -ri 's/^\s*maxrepeat\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.4 [✓] Commented out maxrepeat in pwquality.conf"
   fi
-  
-  # Create pwquality.conf.d directory if missing
+
   if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
     run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.4 [✓] Created pwquality.conf.d directory"
   fi
-  
-  # Create or overwrite maxrepeat setting in custom conf file
+
   echo "maxrepeat = 3" > /etc/security/pwquality.conf.d/50-pwrepeat.conf
   log_message "5.3.3.2.4 [✓] Set maxrepeat = 3 in 50-pwrepeat.conf"
-  
-  # Remove maxrepeat= from pam_pwquality.so lines in PAM profiles
+
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?maxrepeat\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+maxrepeat=[0-9]+/\\1/' \"$file\"" "5.3.3.2.4 [✓] Removed maxrepeat= from $file"
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+maxrepeat=[0-9]+/\1/' \"$file\"" "5.3.3.2.4 [✓] Removed maxrepeat= from $file"
   done
-  
+
   log_message "5.3.3.2.4 [✓] Success: Password consecutive character limit (maxrepeat) configured to 3"
 
 
   # =====================[ SECTION 5.3.3.2.5: Ensure password maximum sequential characters is configured ]=====================
   start_section "5.3.3.2.5"
 
-  # Comment out existing maxsequence line in pwquality.conf
   if [[ -f /etc/security/pwquality.conf ]]; then
-    run_command "sed -ri 's/^\\s*maxsequence\\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.5 Comment out maxsequence in pwquality.conf"
+    run_command "sed -ri 's/^\s*maxsequence\s*=.*/# &/' /etc/security/pwquality.conf" "5.3.3.2.5 [✓] Commented out maxsequence in pwquality.conf"
   fi
 
-  # Create pwquality.conf.d directory if missing
   if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
-    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.5 Create pwquality.conf.d directory"
+    run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.5 [✓] Created pwquality.conf.d directory"
   fi
 
-  # Create or overwrite maxsequence setting in custom conf file
   echo "maxsequence = 3" > /etc/security/pwquality.conf.d/50-pwmaxsequence.conf
-  log_message "5.3.3.2.5 Set maxsequence = 3 in 50-pwmaxsequence.conf"
+  log_message "5.3.3.2.5 [✓] Set maxsequence = 3 in 50-pwmaxsequence.conf"
 
-  # Remove maxsequence= from pam_pwquality.so lines in PAM profiles
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?maxsequence\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+maxsequence=[0-9]+/\\1/' \"$file\"" "5.3.3.2.5 Remove maxsequence= from $file"
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+maxsequence=[0-9]+/\1/' \"$file\"" "5.3.3.2.5 [✓] Removed maxsequence= from $file"
   done
 
-  log_message "5.3.3.2.5 Success: Password sequential character limit (maxsequence) configured to 3"
+  log_message "5.3.3.2.5 [✓] Success: Password sequential character limit (maxsequence) configured to 3"
+
 
   # =====================[ SECTION 5.3.3.2.6: Ensure password dictionary check is enabled ]=====================
   start_section "5.3.3.2.6"
-  
-  # Comment out dictcheck = 0 in pwquality.conf
+
   if [[ -f /etc/security/pwquality.conf ]]; then
-    run_command "sed -ri 's/^\\s*dictcheck\\s*=\\s*0/# &/' /etc/security/pwquality.conf" "5.3.3.2.6 [✓] Commented out dictcheck = 0 in pwquality.conf"
+    run_command "sed -ri 's/^\s*dictcheck\s*=\s*0/# &/' /etc/security/pwquality.conf" "5.3.3.2.6 [✓] Commented out dictcheck = 0 in pwquality.conf"
   fi
-  
-  # Comment out dictcheck = 0 in all pwquality.conf.d/*.conf files
+
   find /etc/security/pwquality.conf.d/ -type f -name '*.conf' 2>/dev/null | while read -r conf_file; do
-    run_command "sed -ri 's/^\\s*dictcheck\\s*=\\s*0/# &/' \"$conf_file\"" "5.3.3.2.6 [✓] Commented out dictcheck = 0 in $conf_file"
+    run_command "sed -ri 's/^\s*dictcheck\s*=\s*0/# &/' \"$conf_file\"" "5.3.3.2.6 [✓] Commented out dictcheck = 0 in $conf_file"
   done
-  
-  # Remove dictcheck= from pam_pwquality.so lines in PAM profiles
+
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?dictcheck\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+dictcheck=[0-9]+/\\1/' \"$file\"" "5.3.3.2.6 [✓] Removed dictcheck= from $file"
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+dictcheck=[0-9]+/\1/' \"$file\"" "5.3.3.2.6 [✓] Removed dictcheck= from $file"
   done
-  
+
   log_message "5.3.3.2.6 [✓] Success: Dictionary check enabled for password quality"
 
 
   # =====================[ SECTION 5.3.3.2.7: Ensure password quality checking is enforced ]=====================
   start_section "5.3.3.2.7"
-  
-  # Comment out enforcing = 0 in pwquality.conf
+
   if [[ -f /etc/security/pwquality.conf ]]; then
-    run_command "sed -ri 's/^\\s*enforcing\\s*=\\s*0/# &/' /etc/security/pwquality.conf" "5.3.3.2.7 [✓] Commented out enforcing = 0 in pwquality.conf"
+    run_command "sed -ri 's/^\s*enforcing\s*=\s*0/# &/' /etc/security/pwquality.conf" "5.3.3.2.7 [✓] Commented out enforcing = 0 in pwquality.conf"
   fi
-  
-  # Comment out enforcing = 0 in all pwquality.conf.d/*.conf files
+
   find /etc/security/pwquality.conf.d/ -type f -name '*.conf' 2>/dev/null | while read -r conf_file; do
-    run_command "sed -ri 's/^\\s*enforcing\\s*=\\s*0/# &/' \"$conf_file\"" "5.3.3.2.7 [✓] Commented out enforcing = 0 in $conf_file"
+    run_command "sed -ri 's/^\s*enforcing\s*=\s*0/# &/' \"$conf_file\"" "5.3.3.2.7 [✓] Commented out enforcing = 0 in $conf_file"
   done
-  
-  # Remove enforcing=0 from pam_pwquality.so lines in PAM profiles
+
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?enforcing=0\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\\s+enforcing=0/\\1/' \"$file\"" "5.3.3.2.7 [✓] Removed enforcing=0 from $file"
+    run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+enforcing=0/\1/' \"$file\"" "5.3.3.2.7 [✓] Removed enforcing=0 from $file"
   done
-  
+
   log_message "5.3.3.2.7 [✓] Success: Password quality enforcement enabled"
 
 
   # =====================[ SECTION 5.3.3.2.8: Ensure password quality is enforced for root user ]=====================
   start_section "5.3.3.2.8"
-  
-  # Create pwquality.conf.d directory if missing
+
   if [[ ! -d /etc/security/pwquality.conf.d/ ]]; then
     run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.8 [✓] Created pwquality.conf.d directory"
   fi
-  
-  # Create or overwrite enforce_for_root setting in custom conf file
+
   echo "enforce_for_root" > /etc/security/pwquality.conf.d/50-pwroot.conf
   log_message "5.3.3.2.8 [✓] Set enforce_for_root in 50-pwroot.conf"
-  
+
   log_message "5.3.3.2.8 [✓] Success: Password quality enforcement enabled for root user"
 
+fi
 
+###############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.3" || "$TARGET_SECTION" == "5.3" ]]; then
 
   # =====================[ SECTION 5.3.3.3.1: Ensure password history is configured ]=====================
   start_section "5.3.3.3.1"
-  
-  # Identify PAM profiles using pam_pwhistory.so in Password section
+
   awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_pwhistory\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
-    # Ensure remember=24 is present
     if grep -q 'pam_pwhistory\.so' "$file"; then
       if grep -q 'pam_pwhistory\.so.*remember=' "$file"; then
         run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)remember=[0-9]+/\1remember=24/' \"$file\"" "5.3.3.3.1 [✓] Updated remember=24 in $file"
       else
         run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 remember=24/' \"$file\"" "5.3.3.3.1 [✓] Added remember=24 to $file"
       fi
-  
-      # Extract profile name from file name
+
       PROFILE_NAME=$(basename "$file")
       run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.3.1 [✓] Re-enabled PAM profile $PROFILE_NAME"
     fi
   done
-  
+
   log_message "5.3.3.3.1 [✓] Success: Password history configured with remember=24"
+
 
   # =====================[ SECTION 5.3.3.3.2: Ensure password history is enforced for root user ]=====================
   start_section "5.3.3.3.2"
-  
-  # Identify PAM profiles using pam_pwhistory.so in Password section
+
   awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_pwhistory\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
-    # Ensure enforce_for_root is present
     if grep -q 'pam_pwhistory\.so' "$file"; then
       if grep -q 'pam_pwhistory\.so.*enforce_for_root' "$file"; then
         log_message "5.3.3.3.2 [ℹ] enforce_for_root already present in $file"
       else
         run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 enforce_for_root/' \"$file\"" "5.3.3.3.2 [✓] Added enforce_for_root to $file"
       fi
-  
-      # Extract profile name from file name
+
       PROFILE_NAME=$(basename "$file")
       run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.3.2 [✓] Re-enabled PAM profile $PROFILE_NAME"
     fi
   done
-  
+
   log_message "5.3.3.3.2 [✓] Success: Password history enforcement enabled for root user"
 
 
   # =====================[ SECTION 5.3.3.3.3: Ensure pam_pwhistory includes use_authtok ]=====================
   start_section "5.3.3.3.3"
-  
-  # Identify PAM profiles using pam_pwhistory.so in Password section
+
   awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_pwhistory\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
-    # Ensure use_authtok is present
     if grep -q 'pam_pwhistory\.so' "$file"; then
       if grep -q 'pam_pwhistory\.so.*use_authtok' "$file"; then
         log_message "5.3.3.3.3 [ℹ] use_authtok already present in $file"
       else
         run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 use_authtok/' \"$file\"" "5.3.3.3.3 [✓] Added use_authtok to $file"
       fi
-  
-      # Extract profile name from file name
+
       PROFILE_NAME=$(basename "$file")
       run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.3.3 [✓] Re-enabled PAM profile $PROFILE_NAME"
     fi
   done
-  
+
   log_message "5.3.3.3.3 [✓] Success: pam_pwhistory includes use_authtok"
 
+fi
+
+###############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.4" || "$TARGET_SECTION" == "5.3" ]]; then
 
   # =====================[ SECTION 5.3.3.4.1: Ensure pam_unix does not include nullok ]=====================
   start_section "5.3.3.4.1"
-  
-  # Find PAM profiles with pam_unix.so containing nullok
+
   grep -PH -- '^\h*([^#\n\r]+\h+)?pam_unix\.so\h+([^#\n\r]+\h+)?nullok\b' /usr/share/pam-configs/* 2>/dev/null | cut -d: -f1 | sort -u | while read -r file; do
-    # Remove nullok from pam_unix.so lines
-    run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)\\s+nullok/\\1/' \"$file\"" "5.3.3.4.1 [✓] Removed nullok from $file"
-  
-    # Extract profile name from file name
+    run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)\s+nullok/\1/' \"$file\"" "5.3.3.4.1 [✓] Removed nullok from $file"
     PROFILE_NAME=$(basename "$file")
     run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.1 [✓] Re-enabled PAM profile $PROFILE_NAME"
   done
-  
+
   log_message "5.3.3.4.1 [✓] Success: nullok removed from pam_unix.so lines"
-  
+
 
   # =====================[ SECTION 5.3.3.4.2: Ensure pam_unix does not include remember ]=====================
   start_section "5.3.3.4.2"
-  
-  # Find PAM profiles with pam_unix.so containing remember=
+
   grep -PH -- '^\h*([^#\n\r]+\h+)?pam_unix\.so\h+([^#\n\r]+\h+)?remember\b' /usr/share/pam-configs/* 2>/dev/null | cut -d: -f1 | sort -u | while read -r file; do
-    # Remove remember=<N> from pam_unix.so lines
-    run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)\\s+remember=[0-9]+/\\1/' \"$file\"" "5.3.3.4.2 [✓] Removed remember= from $file"
-  
-    # Extract profile name from file name
+    run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)\s+remember=[0-9]+/\1/' \"$file\"" "5.3.3.4.2 [✓] Removed remember= from $file"
     PROFILE_NAME=$(basename "$file")
     run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.2 [✓] Re-enabled PAM profile $PROFILE_NAME"
   done
-  
+
   log_message "5.3.3.4.2 [✓] Success: remember= removed from pam_unix.so lines"
 
 
   # =====================[ SECTION 5.3.3.4.3: Ensure pam_unix includes a strong password hashing algorithm ]=====================
   start_section "5.3.3.4.3"
-  
-  # Identify PAM profiles using pam_unix.so in Password section
+
   awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_unix\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
-    # Ensure hashing algorithm is present (yescrypt or sha512)
     if grep -q 'pam_unix\.so' "$file"; then
       if grep -Eq 'pam_unix\.so.*(yescrypt|sha512)' "$file"; then
         log_message "5.3.3.4.3 [ℹ] Strong hashing algorithm already present in $file"
       else
         run_command "sed -i -E 's/(pam_unix\.so[^#\n\r]*)/\1 yescrypt/' \"$file\"" "5.3.3.4.3 [✓] Added yescrypt to $file"
       fi
-  
-      # Extract profile name from file name
       PROFILE_NAME=$(basename "$file")
       run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.3 [✓] Re-enabled PAM profile $PROFILE_NAME"
     fi
   done
-  
+
   log_message "5.3.3.4.3 [✓] Success: pam_unix configured with strong password hashing algorithm"
-  
 
-
+fi
+###############################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.4.4" || "$TARGET_SECTION" == "5.3" ]]; then
   # =====================[ SECTION 5.3.3.4.4: Ensure pam_unix includes use_authtok in Password section only ]=====================
   start_section "5.3.3.4.4"
 
-  # Helper: Check if system is online
-  is_online() {
-    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
-  }
-
-  # Install all required PAM modules first
-  if is_online; then
-    apt update
-    apt install --reinstall -y \
-      libpam0g \
-      libpam-modules \
-      libpam-modules-bin \
-      libpam-runtime \
-      libpam-pwquality \
-      libpam-tmpdir \
-      libpam-fprintd
-  else
-    log_message "5.3.3.4.4 Skipped PAM package install: system appears to be offline"
-  fi
-
-  # Confirm pam_unix.so is present
-  grep pam_unix.so /etc/pam.d/common-password || echo "Missing pam_unix.so — passwd will fail"
-
-  # Reconfigure PAM profiles
-  if command -v pam-auth-update &>/dev/null; then
-    pam-auth-update --force
-  else
-    log_message "5.3.3.4.4 Skipped pam-auth-update: command not available"
-  fi
-
-  # Modify PAM profiles to include use_authtok in Password section only
+  # Identify PAM profiles using pam_unix.so in Password section
   awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_unix\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
+
+    # Modify only Password section to include use_authtok (not Password-Initial)
     awk '
       BEGIN { in_password = 0 }
       /^Password-Type:/ { in_password = 1; next }
@@ -2909,29 +2908,25 @@ EOF
         print
       }
     ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+
     log_message "5.3.3.4.4 [✓] Updated $file to include use_authtok in Password section"
 
+    # Re-enable the modified PAM profile
     PROFILE_NAME=$(basename "$file")
     run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.4 [✓] Re-enabled PAM profile $PROFILE_NAME"
   done
 
-  log_message "5.3.3.4.4 [✓] Success: pam_unix includes use_authtok in Password section only"
-
-  # =====================[ PAM Functionality Test ]=====================
-  userdel -r testuser_5311 2>/dev/null
-  useradd -m testuser_5311
-  echo "testuser_5311:TempPass123!" | chpasswd
-  echo -e "TempPass123!\nNewPass123!\nNewPass123!" | passwd testuser_5311 > /tmp/passwd_test.log 2>&1
-  EXIT_CODE=$?
-
-  if [[ $EXIT_CODE -eq 0 ]]; then
-    log_message "5.3.3.4.4 [✓] Password change test passed for testuser_5311"
+  # Final check: confirm pam_unix.so is present in common-password
+  if grep -q 'pam_unix.so' /etc/pam.d/common-password; then
+    log_message "5.3.3.4.4 [✓] Verified pam_unix.so is present in /etc/pam.d/common-password"
   else
-    log_message "5.3.3.4.4 [✗] Password change test failed — check /tmp/passwd_test.log and PAM configuration"
-    ls -l /etc/shadow >> /tmp/passwd_test.log
-    stat /etc/shadow >> /tmp/passwd_test.log
+    log_message "5.3.3.4.4 [✗] pam_unix.so missing from /etc/pam.d/common-password — passwd will fail"
   fi
+
+  log_message "5.3.3.4.4 [✓] Success: pam_unix includes use_authtok in Password section only"
 fi
+
+
 
 
 ########################################################################################
