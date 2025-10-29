@@ -26,6 +26,10 @@ CURRENT_SECTION=""
 # =====================[ SUMMARY TRACKING ]=====================
 declare -A SUCCESS_COUNT
 declare -A ERROR_COUNT
+# Resolve script directory once globally
+# Resolve script directory once globally
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEB_DIR="/home/harden/packages"
 
 # =====================[ LOGGING FILES ]=====================
 SUCCESS_LOG="$LOG_DIR/success.log"
@@ -1446,7 +1450,40 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" ==
 
     # =====================[ SECTION 4.2: Configure UFW ]=====================
     start_section "4.2.1"
-    run_command "apt-get install -y ufw" "4.2.1 Install UFW"
+    # Helper: Check if system is online
+    is_online() {
+      ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+    }
+    
+    # Helper: Install package with offline fallback
+    install_package() {
+      local pkg="$1"
+      local section="$2"
+      local log_file="/tmp/${pkg}_install.log"
+    
+      if dpkg -s "$pkg" >/dev/null 2>&1; then
+        log_message "$section [✓] $pkg is already installed"
+        return
+      fi
+    
+      if is_online; then
+        run_command "apt-get install -y $pkg" "$section Install $pkg online"
+      else
+        log_message "$section System appears to be offline — attempting offline install of $pkg"
+        if [ -d "$deb_dir" ]; then
+          local file=$(find "$deb_dir" -type f -name "${pkg}_*.deb" | head -n 1)
+          if [[ -n "$file" ]]; then
+            dpkg -i "$file" > "$log_file" 2>&1
+            apt-get install -f -y >> "$log_file" 2>&1
+            log_message "$section [✓] $pkg installed from offline package"
+          else
+            log_message "$section [✗] Offline package for $pkg not found in $deb_dir"
+          fi
+        else
+          log_message "$section [✗] Offline package directory not found: $deb_dir"
+        fi
+      fi
+    }
 
     start_section "4.2.2"
     run_command "apt-get purge -y iptables-persistent" "4.2.2 Remove iptables-persistent"
@@ -2096,23 +2133,62 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.2" ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.2.1" || "$TARGET_SECTION" == "5.2" ]]; then
   # =====================[ SECTION 5.2.1: Ensure sudo is installed ]=====================
   start_section "5.2.1"
 
-  # Check for LDAP requirement (customize this logic based on your environment)
+  
+  LOG_FILE="/tmp/sudo_install.log"
+
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
+  # Determine package based on LDAP presence
   if grep -qi 'ldap' /etc/nsswitch.conf || getent passwd | grep -qi 'ldap'; then
-    run_command "apt-get install -y sudo-ldap" "5.2.1 Install sudo-ldap (LDAP detected)"
+    PACKAGE="sudo-ldap"
+    log_message "5.2.1 LDAP detected — using sudo-ldap"
   else
-    run_command "apt-get install -y sudo" "5.2.1 Install sudo"
+    PACKAGE="sudo"
+  fi
+
+  # Check if sudo is already installed
+  if dpkg -s "$PACKAGE" >/dev/null 2>&1; then
+    log_message "5.2.1 [✓] $PACKAGE is already installed"
+  else
+    if is_online; then
+      run_command "apt-get install -y $PACKAGE" "5.2.1 Install $PACKAGE online"
+    else
+      log_message "5.2.1 System appears to be offline — attempting offline install of $PACKAGE"
+
+      if [ -d "$DEB_DIR" ]; then
+        LOCAL_DEB=$(find "$DEB_DIR" -type f -name "${PACKAGE}_*.deb" | head -n 1)
+        if [[ -n "$LOCAL_DEB" ]]; then
+          dpkg -i "$LOCAL_DEB" > "$LOG_FILE" 2>&1
+          apt-get install -f -y >> "$LOG_FILE" 2>&1
+          EXIT_CODE=$?
+          if [[ $EXIT_CODE -eq 0 ]]; then
+            log_message "5.2.1 [✓] $PACKAGE installed from offline package"
+          else
+            log_message "5.2.1 [✗] Offline install failed with exit code $EXIT_CODE"
+          fi
+        else
+          log_message "5.2.1 [✗] Offline package for $PACKAGE not found in $DEB_DIR"
+        fi
+      else
+        log_message "5.2.1 [✗] Offline package directory not found: $DEB_DIR"
+      fi
+    fi
   fi
 
   # Verify installation
   if command -v sudo >/dev/null 2>&1; then
-    log_message "5.2.1 Success: sudo is installed"
+    log_message "5.2.1 [✓] sudo is available on the system"
   else
-    log_message "5.2.1 Error: sudo installation failed — manual remediation required"
+    log_message "5.2.1 [✗] sudo installation failed — manual remediation required"
   fi
+
 
   # =====================[ SECTION 5.2.2: Ensure sudo commands use PTY ]=====================
   start_section "5.2.2"
@@ -2253,7 +2329,8 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
     log_success "5.3.1.1 Installed PAM packages online"
   else
     log_message "5.3.1.1 System appears to be offline — attempting offline PAM install"
-    DEB_DIR="/opt/hardening/debs"
+ 
+
     if [ -d "$DEB_DIR" ]; then
       for pkg in "${PAM_PACKAGES[@]}"; do
         file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
@@ -2282,7 +2359,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
   # =====================[ SECTION 5.3.1.2: Ensure libpam-modules is installed ]=====================
   start_section "5.3.1.2"
 
-  DEB_DIR="/opt/hardening/debs"
+ 
   LOG_FILE="/tmp/pam_modules_upgrade.log"
 
   # Check if libpam-modules is installed
@@ -2303,6 +2380,11 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
     log_message "5.3.1.2 Log saved to $LOG_FILE"
 
   else
+    # Helper: Check if system is online
+    is_online() {
+      ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+    }
+
     if is_online; then
       apt update
       apt install -y libpam-modules
@@ -2311,6 +2393,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
       LOCAL_DEB=$(find "$DEB_DIR" -type f -name "libpam-modules_*.deb" | head -n 1)
       if [[ -n "$LOCAL_DEB" ]]; then
         dpkg -i "$LOCAL_DEB"
+        apt-get install -f -y
         log_message "5.3.1.2 [✓] libpam-modules installed from offline package"
       else
         log_message "5.3.1.2 [✗] Offline package for libpam-modules not found in $DEB_DIR"
@@ -2321,10 +2404,11 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
   fi
 
 
+
   # =====================[ SECTION 5.3.1.3: Ensure libpam-pwquality is installed ]=====================
   start_section "5.3.1.3"
 
-  DEB_DIR="/opt/hardening/debs"
+
   LOG_FILE="/tmp/pwquality_install.log"
   PACKAGE="libpam-pwquality"
 
@@ -2332,6 +2416,11 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
   if dpkg -s "$PACKAGE" >/dev/null 2>&1; then
     log_message "5.3.1.3 [✓] $PACKAGE is already installed"
   else
+    # Helper: Check if system is online
+    is_online() {
+      ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+    }
+
     if ! is_online; then
       log_message "5.3.1.3 [✗] System appears to be offline — attempting offline install"
       if [ -d "$DEB_DIR" ]; then
@@ -2341,6 +2430,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
           EXIT_CODE=$?
           if [[ $EXIT_CODE -eq 0 ]]; then
             log_message "5.3.1.3 [✓] $PACKAGE installed from offline package"
+            apt-get install -f -y >> "$LOG_FILE" 2>&1
           else
             log_message "5.3.1.3 [✗] Offline install failed with exit code $EXIT_CODE"
           fi
@@ -2368,9 +2458,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
       log_message "5.3.1.3 Log saved to $LOG_FILE"
     fi
   fi
-
 fi
-
 
 
 ###############################################################################################
@@ -2887,44 +2975,49 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.4" || "$TARGET_SECTION
   log_message "5.3.3.4.3 [✓] Success: pam_unix configured with strong password hashing algorithm"
 
 fi
-###############################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.4.4" || "$TARGET_SECTION" == "5.3" ]]; then
-  # =====================[ SECTION 5.3.3.4.4: Ensure pam_unix includes use_authtok in Password section only ]=====================
-  start_section "5.3.3.4.4"
+    # =====================[ SECTION 5.3.3.4.4: Ensure pam_unix includes use_authtok in Password section only ]=====================
+    start_section "5.3.3.4.4"
 
-  # Identify PAM profiles using pam_unix.so in Password section
-  awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_unix\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
+    UNIX_PROFILE="/usr/share/pam-configs/unix"
+    PAM_FILE="/etc/pam.d/common-password"
+    BACKUP_FILE="/etc/pam.d/common-password.bak"
 
-    # Modify only Password section to include use_authtok (not Password-Initial)
-    awk '
-      BEGIN { in_password = 0 }
-      /^Password-Type:/ { in_password = 1; next }
-      /^Password-Initial:/ { in_password = 0 }
-      /^-Type:/ { in_password = 0 }
-      {
-        if (in_password && /pam_unix\.so/ && !/use_authtok/) {
-          sub(/pam_unix\.so/, "pam_unix.so use_authtok")
-        }
-        print
-      }
-    ' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+    # Ensure the profile contains a valid Password-Type block
+    if ! grep -q '^Password-Type:' "$UNIX_PROFILE"; then
+      cat <<EOF >> "$UNIX_PROFILE"
 
-    log_message "5.3.3.4.4 [✓] Updated $file to include use_authtok in Password section"
+Name: Unix authentication
+Default: yes
+Priority: 0
+Password-Type: Primary
+Password:
+        required pam_unix.so obscure use_authtok try_first_pass yescrypt
+EOF
+      log_message "5.3.3.4.4 [✓] Injected missing Password-Type block into unix profile"
+    fi
 
-    # Re-enable the modified PAM profile
-    PROFILE_NAME=$(basename "$file")
-    run_command "pam-auth-update --enable \"$PROFILE_NAME\"" "5.3.3.4.4 [✓] Re-enabled PAM profile $PROFILE_NAME"
-  done
+    # Re-enable and rebuild PAM configuration
+    run_command "pam-auth-update --enable unix" "5.3.3.4.4 Re-enabled PAM profile unix"
+    run_command "DEBIAN_FRONTEND=noninteractive pam-auth-update --force" "5.3.3.4.4 Rebuild PAM configuration"
 
-  # Final check: confirm pam_unix.so is present in common-password
-  if grep -q 'pam_unix.so' /etc/pam.d/common-password; then
-    log_message "5.3.3.4.4 [✓] Verified pam_unix.so is present in /etc/pam.d/common-password"
-  else
-    log_message "5.3.3.4.4 [✗] pam_unix.so missing from /etc/pam.d/common-password — passwd will fail"
-  fi
+    # Backup current PAM file
+    cp "$PAM_FILE" "$BACKUP_FILE"
+    log_message "5.3.3.4.4 [✓] Backed up common-password to $BACKUP_FILE"
 
-  log_message "5.3.3.4.4 [✓] Success: pam_unix includes use_authtok in Password section only"
+    # Check for pam_unix.so and inject if missing
+    if ! grep -q 'pam_unix.so' "$PAM_FILE"; then
+      echo 'password required pam_unix.so obscure use_authtok try_first_pass yescrypt' >> "$PAM_FILE"
+      log_message "5.3.3.4.4 [✓] Manually appended pam_unix.so line to $PAM_FILE"
+    else
+      log_message "5.3.3.4.4 [✓] Verified pam_unix.so is present in $PAM_FILE"
+    fi
+
+    log_message "5.3.3.4.4 [✓] Success: pam_unix.so is active for password changes"
 fi
+
+
+
 
 
 
@@ -3226,7 +3319,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" || "$TARGET_SECTION" 
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2" || "$TARGET_SECTION" == 6.1 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2.1.1" || "$TARGET_SECTION" == "6.1.2" || "$TARGET_SECTION" == "6.1" ]]; then
   # =====================[ SECTION 6.1.2.1.1: Ensure systemd-journal-remote is installed ]=====================
   start_section "6.1.2.1.1"
 
@@ -3235,11 +3328,33 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2" || "$TARGET_SECTION" 
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  if is_online; then
-    run_command "apt install -y systemd-journal-remote" "6.1.2.1.1 Install systemd-journal-remote"
+  # Resolve script directory and offline package path
+
+
+  # Check if systemd-journal-remote is already installed
+  if dpkg -s systemd-journal-remote >/dev/null 2>&1; then
+    log_message "6.1.2.1.1 [✓] systemd-journal-remote is already installed"
   else
-    log_message "6.1.2.1.1 Skipped: system appears to be offline — systemd-journal-remote not installed"
+    if is_online; then
+      run_command "apt install -y systemd-journal-remote" "6.1.2.1.1 Install systemd-journal-remote"
+    else
+      log_message "6.1.2.1.1 System appears to be offline — attempting offline install"
+
+      if [ -d "$DEB_DIR" ]; then
+        file=$(find "$DEB_DIR" -type f -name "systemd-journal-remote_*.deb" | head -n 1)
+        if [[ -n "$file" ]]; then
+          dpkg -i "$file"
+          log_success "6.1.2.1.1 Installed systemd-journal-remote from offline package"
+          apt-get install -f -y
+        else
+          log_error "6.1.2.1.1 Missing offline package for systemd-journal-remote"
+        fi
+      else
+        log_error "6.1.2.1.1 Offline package directory not found: $DEB_DIR"
+      fi
+    fi
   fi
+
 
   # =====================[ SECTION 6.1.2.1.2: Ensure systemd-journal-upload authentication is configured ]=====================
   start_section "6.1.2.1.2"
@@ -3403,7 +3518,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2" || "$TARGET_SECTION" 
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" == 6.1 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" == "6.1" ]]; then
 
   # =====================[ SECTION 6.1.3.1: Ensure rsyslog is installed ]=====================
   start_section "6.1.3.1"
@@ -3413,11 +3528,33 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" 
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  if is_online; then
-    run_command "apt install -y rsyslog" "6.1.3.1 Install rsyslog"
+  # Resolve script directory and offline package path
+
+
+  # Check if rsyslog is already installed
+  if dpkg -s rsyslog >/dev/null 2>&1; then
+    log_message "6.1.3.1 [✓] rsyslog is already installed"
   else
-    log_message "6.1.3.1 Skipped: system appears to be offline — rsyslog not installed"
+    if is_online; then
+      run_command "apt install -y rsyslog" "6.1.3.1 Install rsyslog"
+    else
+      log_message "6.1.3.1 System appears to be offline — attempting offline rsyslog install"
+
+      if [ -d "$DEB_DIR" ]; then
+        file=$(find "$DEB_DIR" -type f -name "rsyslog_*.deb" | head -n 1)
+        if [[ -n "$file" ]]; then
+          dpkg -i "$file"
+          log_success "6.1.3.1 Installed rsyslog from offline package"
+          apt-get install -f -y
+        else
+          log_error "6.1.3.1 Missing offline package for rsyslog"
+        fi
+      else
+        log_error "6.1.3.1 Offline package directory not found: $DEB_DIR"
+      fi
+    fi
   fi
+
 
 
   # =====================[ SECTION 6.1.3.2: Ensure rsyslog service is enabled and active ]=====================
@@ -3714,14 +3851,37 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" || "$TARGET_SECTION" 
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  if is_online; then
-    run_command "apt install -y auditd audispd-plugins" "6.2.1.1 Install auditd and audispd-plugins"
+  # Resolve script directory and offline package path
+
+
+  # Check if auditd is already installed
+  if dpkg -s auditd >/dev/null 2>&1; then
+    log_message "6.2.1.1 [✓] auditd is already installed"
   else
-    log_message "6.2.1.1 Skipped: system appears to be offline — auditd not installed"
+    if is_online; then
+      run_command "apt install -y auditd audispd-plugins" "6.2.1.1 Install auditd and audispd-plugins"
+    else
+      log_message "6.2.1.1 System appears to be offline — attempting offline auditd install"
+
+      if [ -d "$DEB_DIR" ]; then
+        for pkg in auditd audispd-plugins; do
+          file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
+          if [[ -n "$file" ]]; then
+            dpkg -i "$file"
+            log_success "6.2.1.1 Installed $pkg from offline package"
+          else
+            log_error "6.2.1.1 Missing offline package for $pkg"
+          fi
+        done
+        apt-get install -f -y
+      else
+        log_error "6.2.1.1 Offline package directory not found: $DEB_DIR"
+      fi
+    fi
   fi
 
-  
-  # =====================[ SECTION 6.2.1.2: Ensure auditd service is enabled and active ]=====================
+
+    # =====================[ SECTION 6.2.1.2: Ensure auditd service is enabled and active ]=====================
   start_section "6.2.1.2"
 
   run_command "systemctl unmask auditd" "6.2.1.2 Unmask auditd service"
@@ -4586,80 +4746,97 @@ chgrp root /sbin/auditctl /sbin/aureport /sbin/ausearch /sbin/autrace /sbin/audi
 
 fi
 
-########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.3" ]]; then
+#############################################################################
+  if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.3" ]]; then
 
-  # =====================[ SECTION 6.3.1: Ensure AIDE is installed and initialized ]=====================
-  start_section "6.3.1"
+    # =====================[ SECTION 6.3.1: Ensure AIDE is installed and initialized ]=====================
+    start_section "6.3.1"
 
-  # Helper: Check if system is online
-  is_online() {
-    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
-  }
+    # Helper: Check if system is online
+    is_online() {
+      ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+    }
 
-  # Attempt to install AIDE if not already installed
-  if ! dpkg -s aide >/dev/null 2>&1; then
-    if is_online; then
-      run_command "apt install -y aide aide-common" "6.3.1 Install AIDE and aide-common packages"
+
+    # Attempt to install AIDE if not already installed
+    if ! dpkg -s aide >/dev/null 2>&1; then
+      if is_online; then
+        run_command "apt install -y aide aide-common" "6.3.1 Install AIDE and aide-common packages"
+      else
+        log_message "6.3.1 System appears to be offline — attempting offline AIDE install"
+
+        if [ -d "$DEB_DIR" ]; then
+          for pkg in aide aide-common; do
+            file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
+            if [[ -n "$file" ]]; then
+              dpkg -i "$file"
+              log_success "6.3.1 Installed $pkg from offline package"
+            else
+              log_error "6.3.1 Missing offline package for $pkg"
+            fi
+          done
+          apt-get install -f -y
+        else
+          log_error "6.3.1 Offline package directory not found: $DEB_DIR"
+        fi
+      fi
     else
-      log_message "6.3.1 Skipped: system appears to be offline — AIDE not installed"
+      log_message "6.3.1 [✓] AIDE is already installed"
     fi
-  else
-    log_message "6.3.1 [✓] AIDE is already installed"
-  fi
 
-  # Re-check if AIDE is installed before continuing
-  if ! dpkg -s aide >/dev/null 2>&1; then
-    log_message "6.3.1 [✗] AIDE is not installed — skipping initialization and scheduling"
-    return
-  fi
+    # Re-check if AIDE is installed before continuing
+    if ! dpkg -s aide >/dev/null 2>&1; then
+      log_message "6.3.1 [✗] AIDE is not installed — skipping initialization and scheduling"
+      return
+    fi
 
-  # Initialize AIDE database
-  if command -v aideinit &>/dev/null; then
-    run_command "aideinit" "6.3.1 Initialize AIDE database"
+    # Initialize AIDE database
+    if command -v aideinit &>/dev/null; then
+      run_command "aideinit" "6.3.1 Initialize AIDE database"
 
-    if [[ -f /var/lib/aide/aide.db.new ]]; then
-      run_command "mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db" "6.3.1 Move initialized AIDE database into place"
+      if [[ -f /var/lib/aide/aide.db.new ]]; then
+        run_command "mv /var/lib/aide/aide.db.new /var/lib/aide/aide.db" "6.3.1 Move initialized AIDE database into place"
+      else
+        log_message "6.3.1 Warning: aide.db.new not found — initialization may have failed"
+      fi
     else
-      log_message "6.3.1 Warning: aide.db.new not found — initialization may have failed"
+      log_message "6.3.1 Skipped: aideinit command not found — initialization not performed"
     fi
-  else
-    log_message "6.3.1 Skipped: aideinit command not found — initialization not performed"
+
+    # =====================[ SECTION 6.3.2: Ensure AIDE integrity checks are scheduled ]=====================
+    start_section "6.3.2"
+
+    run_command '
+    systemctl unmask dailyaidecheck.timer dailyaidecheck.service
+    ' "6.3.2 Unmask dailyaidecheck.timer and dailyaidecheck.service"
+
+    run_command '
+    systemctl --now enable dailyaidecheck.timer
+    ' "6.3.2 Enable and start dailyaidecheck.timer for daily integrity checks"
+
+    run_command '
+    if grep -q "/usr/bin/aide" /etc/systemd/system/aidecheck.service; then
+      sed -i "s|/usr/bin/aide|/usr/bin/aide.wrapper|g" /etc/systemd/system/aidecheck.service
+      systemctl daemon-reexec
+    fi
+    ' "6.3.2 Replace aide with aide.wrapper in aidecheck.service (Ubuntu best practice)"
+
+    # =====================[ SECTION 6.3.3: Ensure cryptographic integrity of audit tools ]=====================
+    start_section "6.3.3"
+
+    run_command '
+    AUDIT_PATH=$(readlink -f /sbin)
+    printf "%s\n" "" "# Audit Tools" \
+    "$AUDIT_PATH/auditctl p+i+n+u+g+s+b+acl+xattrs+sha512" \
+    "$AUDIT_PATH/auditd p+i+n+u+g+s+b+acl+xattrs+sha512" \
+    "$AUDIT_PATH/ausearch p+i+n+u+g+s+b+acl+xattrs+sha512" \
+    "$AUDIT_PATH/aureport p+i+n+u+g+s+b+acl+xattrs+sha512" \
+    "$AUDIT_PATH/autrace p+i+n+u+g+s+b+acl+xattrs+sha512" \
+    "$AUDIT_PATH/augenrules p+i+n+u+g+s+b+acl+xattrs+sha512" >> /etc/aide/aide.conf
+    ' "6.3.3 Add audit tool integrity rules to aide.conf using sha512"
+
   fi
 
-  # =====================[ SECTION 6.3.2: Ensure AIDE integrity checks are scheduled ]=====================
-  start_section "6.3.2"
-
-  run_command '
-systemctl unmask dailyaidecheck.timer dailyaidecheck.service
-' "6.3.2 Unmask dailyaidecheck.timer and dailyaidecheck.service"
-
-  run_command '
-systemctl --now enable dailyaidecheck.timer
-' "6.3.2 Enable and start dailyaidecheck.timer for daily integrity checks"
-
-  run_command '
-if grep -q "/usr/bin/aide" /etc/systemd/system/aidecheck.service; then
-  sed -i "s|/usr/bin/aide|/usr/bin/aide.wrapper|g" /etc/systemd/system/aidecheck.service
-  systemctl daemon-reexec
-fi
-' "6.3.2 Replace aide with aide.wrapper in aidecheck.service (Ubuntu best practice)"
-
-  # =====================[ SECTION 6.3.3: Ensure cryptographic integrity of audit tools ]=====================
-  start_section "6.3.3"
-
-  run_command '
-AUDIT_PATH=$(readlink -f /sbin)
-printf "%s\n" "" "# Audit Tools" \
-"$AUDIT_PATH/auditctl p+i+n+u+g+s+b+acl+xattrs+sha512" \
-"$AUDIT_PATH/auditd p+i+n+u+g+s+b+acl+xattrs+sha512" \
-"$AUDIT_PATH/ausearch p+i+n+u+g+s+b+acl+xattrs+sha512" \
-"$AUDIT_PATH/aureport p+i+n+u+g+s+b+acl+xattrs+sha512" \
-"$AUDIT_PATH/autrace p+i+n+u+g+s+b+acl+xattrs+sha512" \
-"$AUDIT_PATH/augenrules p+i+n+u+g+s+b+acl+xattrs+sha512" >> /etc/aide/aide.conf
-' "6.3.3 Add audit tool integrity rules to aide.conf using sha512"
-
-fi
 
 
 ##############################################################################
