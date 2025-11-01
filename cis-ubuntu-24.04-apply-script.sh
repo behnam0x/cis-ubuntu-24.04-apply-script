@@ -1676,25 +1676,37 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
     fi
   done < <(find -L /etc/ssh -xdev -type f -print0 2>/dev/null)
 
+
   # =====================[ SECTION 5.1.4: Configure SSHD Access Control ]=====================
   start_section "5.1.4"
 
   # Define your access control method: either AllowUsers or AllowGroups
   SSHD_ACCESS_TYPE="AllowUsers"  # or "AllowGroups"
-  SSHD_ACCESS_VALUE="adminuser behnam admin"  # comma-separated list of users or groups
+  SSHD_ACCESS_VALUE="adminuser behnam admin"  # space-separated list of users or groups
+  SSHD_DIRECTIVE="${SSHD_ACCESS_TYPE} ${SSHD_ACCESS_VALUE}"
 
-  # Backup original config
-  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.4 Backup sshd_config"
+  # Backup original config (only once)
+  if [ ! -f /etc/ssh/sshd_config.bak ]; then
+    run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.4 Backup sshd_config"
+  fi
 
-  # Insert directive before first Include or Match statement
-  if grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
-    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
-    run_command "sed -i '${LINE_NUM}i\\${SSHD_ACCESS_TYPE} ${SSHD_ACCESS_VALUE}' /etc/ssh/sshd_config" "5.1.4 Insert ${SSHD_ACCESS_TYPE} before Include/Match"
+  # Only insert if directive is not already present
+  if ! grep -qF "$SSHD_DIRECTIVE" /etc/ssh/sshd_config; then
+    if grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
+      LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+      run_command "sed -i '${LINE_NUM}i\\${SSHD_DIRECTIVE}' /etc/ssh/sshd_config" "5.1.4 Insert ${SSHD_ACCESS_TYPE} before Include/Match"
+    else
+      run_command "echo '${SSHD_DIRECTIVE}' >> /etc/ssh/sshd_config" "5.1.4 Append ${SSHD_ACCESS_TYPE} to sshd_config"
+    fi
   else
-    run_command "echo '${SSHD_ACCESS_TYPE} ${SSHD_ACCESS_VALUE}' >> /etc/ssh/sshd_config" "5.1.4 Append ${SSHD_ACCESS_TYPE} to sshd_config"
+    echo "5.1.4 skipped: ${SSHD_ACCESS_TYPE} directive already present in sshd_config"
   fi
 
   # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.4 Restart SSH service"
+
+
+
 
   # =====================[ SECTION 5.1.5: Configure SSHD Banner ]=====================
   start_section "5.1.5"
@@ -1703,24 +1715,35 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   BANNER_PATH="/etc/issue.net"
   BANNER_MESSAGE="Authorized users only. All activity may be monitored and reported."
 
-  # Backup sshd_config
-  run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.5 Backup sshd_config"
-
-  # Insert Banner directive before first Include or Match
-  if grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
-    LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
-    run_command "sed -i '${LINE_NUM}i\\Banner ${BANNER_PATH}' /etc/ssh/sshd_config" "5.1.5 Insert Banner directive before Include/Match"
-  else
-    run_command "echo 'Banner ${BANNER_PATH}' >> /etc/ssh/sshd_config" "5.1.5 Append Banner directive to sshd_config"
+  # Backup sshd_config (only once)
+  if [ ! -f /etc/ssh/sshd_config.bak ]; then
+    run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.5 Backup sshd_config"
   fi
 
-  # Create banner file with sanitized message
+  # Only insert Banner directive if not already present
+  if ! grep -q "^Banner ${BANNER_PATH}" /etc/ssh/sshd_config; then
+    if grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
+      LINE_NUM=$(grep -nE '^\s*(Include|Match)\b' /etc/ssh/sshd_config | head -n1 | cut -d: -f1)
+      run_command "sed -i '${LINE_NUM}i\\Banner ${BANNER_PATH}' /etc/ssh/sshd_config" "5.1.5 Insert Banner directive before Include/Match"
+    else
+      run_command "echo 'Banner ${BANNER_PATH}' >> /etc/ssh/sshd_config" "5.1.5 Append Banner directive to sshd_config"
+    fi
+  else
+    echo "5.1.5 skipped: Banner directive already present in sshd_config"
+  fi
+
+  # Create or update banner file
   run_command "printf '%s\\n' \"${BANNER_MESSAGE}\" > ${BANNER_PATH}" "5.1.5 Create banner file"
+
+  # Remove platform escape sequences (if any)
   run_command "sed -i 's/\\\
 
 \[mrsv]//g' ${BANNER_PATH}" "5.1.5 Remove platform escape sequences from banner"
 
   # Restart SSH service to apply changes
+  run_command "systemctl restart sshd" "5.1.5 Restart SSH service"
+
+
 
   # =====================[ SECTION 5.1.6: Configure SSHD Ciphers ]=====================
   start_section "5.1.6"
@@ -5200,10 +5223,6 @@ EOF
 
 fi
 ########################################################################################
-
-
-
-
 
 
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
