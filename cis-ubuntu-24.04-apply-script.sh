@@ -421,77 +421,102 @@ fi
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.5" ]]; then
- # =====================[ SECTION 1.5.1: Ensure ASLR is enabled ]=====================
- start_section "1.5.1"
- 
- # Set ASLR parameter in persistent sysctl config
- run_command "printf '%s\\n' 'kernel.randomize_va_space = 2' >> /etc/sysctl.d/60-kernel_sysctl.conf" "1.5.1 Add ASLR setting to /etc/sysctl.d/60-kernel_sysctl.conf"
- 
- # Apply ASLR setting immediately
- run_command "sysctl -w kernel.randomize_va_space=2" "1.5.1 Apply ASLR setting to running kernel"
- 
- # =====================[ SECTION 1.5.2: Ensure ptrace_scope is restricted ]=====================
- start_section "1.5.2"
- 
- # Set ptrace_scope value (adjust to 2 or 3 if required by site policy)
- run_command "printf '%s\\n' 'kernel.yama.ptrace_scope = 1' >> /etc/sysctl.d/60-kernel_sysctl.conf" "1.5.2 Add ptrace_scope setting to /etc/sysctl.d/60-kernel_sysctl.conf"
- 
- # Apply ptrace_scope setting immediately
- run_command "sysctl -w kernel.yama.ptrace_scope=1" "1.5.2 Apply ptrace_scope setting to running kernel"
- 
- # =====================[ SECTION 1.5.3: Ensure core dumps are restricted ]=====================
- start_section "1.5.3"
- 
- LIMITS_FILE="/etc/security/limits.d/99-core-dump.conf"
- SYSCTL_FILE="/etc/sysctl.d/60-fs_sysctl.conf"
- 
- # Create limits file if it doesn't exist
- if [ ! -f "$LIMITS_FILE" ]; then
-   run_command "touch $LIMITS_FILE" "1.5.3 Create $LIMITS_FILE"
- fi
- 
- # Add core dump restriction to limits file
- run_command "grep -q '^\\* hard core 0' $LIMITS_FILE || echo '* hard core 0' >> $LIMITS_FILE" "1.5.3 Set core dump limit in limits.d"
- 
- # Add fs.suid_dumpable to sysctl config
- run_command "printf '\\n%s\\n' 'fs.suid_dumpable = 0' >> $SYSCTL_FILE" "1.5.3 Add fs.suid_dumpable setting to $SYSCTL_FILE"
- 
- # Apply setting immediately
- run_command "sysctl -w fs.suid_dumpable=0" "1.5.3 Apply fs.suid_dumpable setting to running kernel"
- 
- # If systemd-coredump is installed, restrict its behavior
- if [ -f /etc/systemd/coredump.conf ]; then
-   run_command "sed -i 's/^#*Storage=.*/Storage=none/' /etc/systemd/coredump.conf" "1.5.3 Set Storage=none in coredump.conf"
-   run_command "sed -i 's/^#*ProcessSizeMax=.*/ProcessSizeMax=0/' /etc/systemd/coredump.conf" "1.5.3 Set ProcessSizeMax=0 in coredump.conf"
-   run_command "systemctl daemon-reload" "1.5.3 Reload systemd to apply coredump restrictions"
- else
-   log_message "1.5.3 systemd-coredump not installed — skipping coredump.conf configuration"
- fi
- 
- # =====================[ SECTION 1.5.4: Ensure prelink is not installed ]=====================
- start_section "1.5.4"
- 
- # If prelink is installed, undo prelinking and remove the package
- if dpkg -l | grep -qw prelink; then
-   run_command "prelink -ua" "1.5.4 Undo prelinking of binaries"
-   run_command "apt purge -y prelink" "1.5.4 Remove prelink package"
- else
-   log_message "1.5.4 Prelink is not installed — no action needed"
- fi
- 
- # =====================[ SECTION 1.5.5: Ensure automatic error reporting is disabled ]=====================
- start_section "1.5.5"
- 
- # Disable apport in its config file
- run_command "sed -i 's/^enabled=.*/enabled=0/' /etc/default/apport || echo 'enabled=0' >> /etc/default/apport" "1.5.5 Set enabled=0 in /etc/default/apport"
- 
- # Stop and mask the apport service
- run_command "systemctl stop apport.service" "1.5.5 Stop apport service"
- run_command "systemctl mask apport.service" "1.5.5 Mask apport service to prevent restart"
- 
- # Optional: Remove apport package entirely
- run_command "apt purge -y apport" "1.5.5 Remove apport package"
+
+  # =====================[ SECTION 1.5.1: Ensure ASLR is enabled ]=====================
+  start_section "1.5.1"
+
+  SYSCTL_KERNEL="/etc/sysctl.d/60-kernel_sysctl.conf"
+
+  # Add ASLR setting only if not present
+  if ! grep -q '^kernel.randomize_va_space = 2' "$SYSCTL_KERNEL" 2>/dev/null; then
+    run_command "printf '%s\\n' 'kernel.randomize_va_space = 2' >> $SYSCTL_KERNEL" "1.5.1 Add ASLR setting to $SYSCTL_KERNEL"
+  else
+    echo "1.5.1 skipped: ASLR setting already present in $SYSCTL_KERNEL"
+  fi
+
+  # Apply ASLR setting immediately
+  run_command "sysctl -w kernel.randomize_va_space=2" "1.5.1 Apply ASLR setting to running kernel"
+
+  # =====================[ SECTION 1.5.2: Ensure ptrace_scope is restricted ]=====================
+  start_section "1.5.2"
+
+  # Add ptrace_scope setting only if not present
+  if ! grep -q '^kernel.yama.ptrace_scope = 1' "$SYSCTL_KERNEL" 2>/dev/null; then
+    run_command "printf '%s\\n' 'kernel.yama.ptrace_scope = 1' >> $SYSCTL_KERNEL" "1.5.2 Add ptrace_scope setting to $SYSCTL_KERNEL"
+  else
+    echo "1.5.2 skipped: ptrace_scope setting already present in $SYSCTL_KERNEL"
+  fi
+
+  # Apply ptrace_scope setting immediately
+  run_command "sysctl -w kernel.yama.ptrace_scope=1" "1.5.2 Apply ptrace_scope setting to running kernel"
+
+  # =====================[ SECTION 1.5.3: Ensure core dumps are restricted ]=====================
+  start_section "1.5.3"
+
+  LIMITS_FILE="/etc/security/limits.d/99-core-dump.conf"
+  SYSCTL_FS="/etc/sysctl.d/60-fs_sysctl.conf"
+
+  # Create limits file if it doesn't exist
+  if [ ! -f "$LIMITS_FILE" ]; then
+    run_command "touch $LIMITS_FILE" "1.5.3 Create $LIMITS_FILE"
+  fi
+
+  # Add core dump restriction only if not present
+  if ! grep -q '^\* hard core 0' "$LIMITS_FILE"; then
+    run_command "echo '* hard core 0' >> $LIMITS_FILE" "1.5.3 Set core dump limit in limits.d"
+  else
+    echo "1.5.3 skipped: core dump limit already present in $LIMITS_FILE"
+  fi
+
+  # Add fs.suid_dumpable setting only if not present
+  if ! grep -q '^fs.suid_dumpable = 0' "$SYSCTL_FS" 2>/dev/null; then
+    run_command "printf '\\n%s\\n' 'fs.suid_dumpable = 0' >> $SYSCTL_FS" "1.5.3 Add fs.suid_dumpable setting to $SYSCTL_FS"
+  else
+    echo "1.5.3 skipped: fs.suid_dumpable already present in $SYSCTL_FS"
+  fi
+
+  # Apply setting immediately
+  run_command "sysctl -w fs.suid_dumpable=0" "1.5.3 Apply fs.suid_dumpable setting to running kernel"
+
+  # If systemd-coredump is installed, restrict its behavior
+  if [ -f /etc/systemd/coredump.conf ]; then
+    run_command "sed -i 's/^#*Storage=.*/Storage=none/' /etc/systemd/coredump.conf" "1.5.3 Set Storage=none in coredump.conf"
+    run_command "sed -i 's/^#*ProcessSizeMax=.*/ProcessSizeMax=0/' /etc/systemd/coredump.conf" "1.5.3 Set ProcessSizeMax=0 in coredump.conf"
+    run_command "systemctl daemon-reload" "1.5.3 Reload systemd to apply coredump restrictions"
+  else
+    log_message "1.5.3 systemd-coredump not installed — skipping coredump.conf configuration"
+  fi
+
+  # =====================[ SECTION 1.5.4: Ensure prelink is not installed ]=====================
+  start_section "1.5.4"
+
+  # If prelink is installed, undo prelinking and remove the package
+  if dpkg -l | grep -qw prelink; then
+    run_command "prelink -ua" "1.5.4 Undo prelinking of binaries"
+    run_command "apt purge -y prelink" "1.5.4 Remove prelink package"
+  else
+    log_message "1.5.4 Prelink is not installed — no action needed"
+  fi
+
+  # =====================[ SECTION 1.5.5: Ensure automatic error reporting is disabled ]=====================
+  start_section "1.5.5"
+
+  # Disable apport in its config file
+  if grep -q '^enabled=' /etc/default/apport; then
+    run_command "sed -i 's/^enabled=.*/enabled=0/' /etc/default/apport" "1.5.5 Set enabled=0 in /etc/default/apport"
+  else
+    run_command "echo 'enabled=0' >> /etc/default/apport" "1.5.5 Add enabled=0 to /etc/default/apport"
+  fi
+
+  # Stop and mask the apport service
+  run_command "systemctl stop apport.service" "1.5.5 Stop apport service"
+  run_command "systemctl mask apport.service" "1.5.5 Mask apport service to prevent restart"
+
+  # Optional: Remove apport package entirely
+  run_command "apt purge -y apport" "1.5.5 Remove apport package"
+
 fi
+
 
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.6" ]]; then
   # =====================[ SECTION 1.6: Configure Command Line Warning Banners ]=====================
@@ -5223,6 +5248,86 @@ EOF
 
 fi
 ########################################################################################
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.1" || "$TARGET_SECTION" == "8" ]]; then
+
+  # =====================[ SECTION 8.1: Create and Configure Custom User Management Script ]=====================
+  start_section "8.1"
+
+  # Step 1: Create script directory
+  if [ ! -d /usr/sbin/script ]; then
+    run_command "mkdir -p /usr/sbin/script" "8.1.1 Create /usr/sbin/script directory"
+  fi
+
+  # Step 2: Set directory permissions
+  run_command "chmod o+rx /usr/sbin/script" "8.1.2 Set execute permission for others on /usr/sbin/script"
+
+  # Step 3: Create or overwrite useradd script
+  cat << 'EOF' > /usr/sbin/script/useradd
+#!/bin/bash
+
+echo "Enter username:"
+read Username
+
+# Validate input
+if [[ -z "$Username" ]]; then
+  echo "❌ Error: Username cannot be empty."
+  exit 1
+fi
+
+# Check if user already exists
+if id "$Username" &>/dev/null; then
+  echo "❌ Error: User '$Username' already exists."
+  exit 1
+fi
+
+# Create user and set default password
+if /usr/sbin/useradd "$Username"; then
+  echo "$Username:$(openssl passwd -6 123456)" | chpasswd -e 2>/dev/null
+  echo "✅ User '$Username' created with password '123456'."
+  echo "🔒 They will be required to change it at first login."
+  chage -d 0 "$Username"
+else
+  echo "❌ Error: Failed to create user '$Username'."
+  exit 1
+fi
+EOF
+
+  run_command "chmod +x /usr/sbin/script/useradd" "8.1.3 Make useradd script executable"
+
+  # Step 4: Match permissions with system useradd
+  run_command "chmod --reference=/usr/sbin/useradd /usr/sbin/script/useradd" "8.1.4 Match permissions with system useradd"
+
+  # Step 5: Create adduser alias
+  if [ ! -f /usr/sbin/script/adduser ]; then
+    run_command "cp /usr/sbin/script/useradd /usr/sbin/script/adduser" "8.1.5 Create adduser alias"
+  fi
+
+  # Step 6: Update secure_path in sudoers
+  if ! grep -q '/usr/sbin/script' /etc/sudoers; then
+    echo 'Defaults        secure_path="/usr/sbin/script:/sbin:/bin:/usr/sbin:/usr/bin"' >> /etc/sudoers
+    run_command "echo 'Defaults secure_path updated'" "8.1.6 Update secure_path in sudoers"
+  fi
+
+  # Step 7: Update /etc/profile for root PATH
+  if ! grep -q 'pathmunge /usr/sbin/script' /etc/profile; then
+    cat << 'EOF' >> /etc/profile
+
+if [ "$EUID" = "0" ]; then
+    pathmunge /usr/sbin/script
+    pathmunge /usr/sbin
+    pathmunge /usr/local/sbin
+fi
+EOF
+    run_command "source /etc/profile" "8.1.7 Reload profile to apply PATH changes"
+  fi
+
+fi
+
+
+
+
+
 
 
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
