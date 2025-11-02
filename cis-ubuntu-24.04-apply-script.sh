@@ -1217,20 +1217,44 @@ fi
 
 ######################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
+
   # =====================[ SECTION 3.3.1: Disable IP Forwarding ]=====================
   start_section "3.3.1"
 
+  # IPv4 sysctl config
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Create IPv4 config file if it doesn't exist
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.1 Create $SYSCTL_IPV4"
+  fi
+
   # Disable IPv4 forwarding persistently
-  run_command "echo 'net.ipv4.ip_forward = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.1 Set net.ipv4.ip_forward = 0"
-  
+  if ! grep -q '^net.ipv4.ip_forward = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.ip_forward = 0' >> $SYSCTL_IPV4" "3.3.1 Set net.ipv4.ip_forward = 0"
+  else
+    echo "3.3.1 skipped: net.ipv4.ip_forward already set in $SYSCTL_IPV4"
+  fi
+
   # Apply IPv4 forwarding setting immediately
   run_command "sysctl -w net.ipv4.ip_forward=0" "3.3.1 Apply IPv4 forwarding setting"
   run_command "sysctl -w net.ipv4.route.flush=1" "3.3.1 Flush IPv4 routing table"
 
   # Check if IPv6 is enabled
   if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+    SYSCTL_IPV6="/etc/sysctl.d/60-netipv6_sysctl.conf"
+
+    # Create IPv6 config file if it doesn't exist
+    if [ ! -f "$SYSCTL_IPV6" ]; then
+      run_command "touch $SYSCTL_IPV6" "3.3.1 Create $SYSCTL_IPV6"
+    fi
+
     # Disable IPv6 forwarding persistently
-    run_command "echo 'net.ipv6.conf.all.forwarding = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.1 Set net.ipv6.conf.all.forwarding = 0"
+    if ! grep -q '^net.ipv6.conf.all.forwarding = 0' "$SYSCTL_IPV6"; then
+      run_command "echo 'net.ipv6.conf.all.forwarding = 0' >> $SYSCTL_IPV6" "3.3.1 Set net.ipv6.conf.all.forwarding = 0"
+    else
+      echo "3.3.1 skipped: net.ipv6.conf.all.forwarding already set in $SYSCTL_IPV6"
+    fi
 
     # Apply IPv6 forwarding setting immediately
     run_command "sysctl -w net.ipv6.conf.all.forwarding=0" "3.3.1 Apply IPv6 forwarding setting"
@@ -1242,42 +1266,102 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
   # =====================[ SECTION 3.3.2: Disable Packet Redirect Sending ]=====================
   start_section "3.3.2"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Create IPv4 config file if it doesn't exist
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.2 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently disable packet redirects
-  run_command "echo 'net.ipv4.conf.all.send_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.2 Set net.ipv4.conf.all.send_redirects = 0"
-  run_command "echo 'net.ipv4.conf.default.send_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.2 Set net.ipv4.conf.default.send_redirects = 0"
+  if ! grep -q '^net.ipv4.conf.all.send_redirects = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.all.send_redirects = 0' >> $SYSCTL_IPV4" "3.3.2 Set net.ipv4.conf.all.send_redirects = 0"
+  else
+    echo "3.3.2 skipped: net.ipv4.conf.all.send_redirects already set in $SYSCTL_IPV4"
+  fi
+
+  if ! grep -q '^net.ipv4.conf.default.send_redirects = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.default.send_redirects = 0' >> $SYSCTL_IPV4" "3.3.2 Set net.ipv4.conf.default.send_redirects = 0"
+  else
+    echo "3.3.2 skipped: net.ipv4.conf.default.send_redirects already set in $SYSCTL_IPV4"
+  fi
 
   # Apply settings immediately
   run_command "sysctl -w net.ipv4.conf.all.send_redirects=0" "3.3.2 Apply net.ipv4.conf.all.send_redirects"
   run_command "sysctl -w net.ipv4.conf.default.send_redirects=0" "3.3.2 Apply net.ipv4.conf.default.send_redirects"
   run_command "sysctl -w net.ipv4.route.flush=1" "3.3.2 Flush IPv4 routing table"
 
+
+
   # =====================[ SECTION 3.3.3: Ignore Bogus ICMP Responses ]=====================
   start_section "3.3.3"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Create IPv4 config file if it doesn't exist
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.3 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently ignore bogus ICMP error responses
-  run_command "echo 'net.ipv4.icmp_ignore_bogus_error_responses = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.3 Set net.ipv4.icmp_ignore_bogus_error_responses = 1"
+  if ! grep -q '^net.ipv4.icmp_ignore_bogus_error_responses = 1' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.icmp_ignore_bogus_error_responses = 1' >> $SYSCTL_IPV4" "3.3.3 Set net.ipv4.icmp_ignore_bogus_error_responses = 1"
+  else
+    echo "3.3.3 skipped: net.ipv4.icmp_ignore_bogus_error_responses already set in $SYSCTL_IPV4"
+  fi
 
   # Apply setting immediately
   run_command "sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1" "3.3.3 Apply bogus ICMP ignore setting"
   run_command "sysctl -w net.ipv4.route.flush=1" "3.3.3 Flush IPv4 routing table"
 
+
+
   # =====================[ SECTION 3.3.4: Ignore Broadcast ICMP Requests ]=====================
   start_section "3.3.4"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Create IPv4 config file if it doesn't exist
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.4 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently ignore broadcast ICMP echo requests
-  run_command "echo 'net.ipv4.icmp_echo_ignore_broadcasts = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.4 Set net.ipv4.icmp_echo_ignore_broadcasts = 1"
+  if ! grep -q '^net.ipv4.icmp_echo_ignore_broadcasts = 1' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.icmp_echo_ignore_broadcasts = 1' >> $SYSCTL_IPV4" "3.3.4 Set net.ipv4.icmp_echo_ignore_broadcasts = 1"
+  else
+    echo "3.3.4 skipped: net.ipv4.icmp_echo_ignore_broadcasts already set in $SYSCTL_IPV4"
+  fi
 
   # Apply setting immediately
   run_command "sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1" "3.3.4 Apply broadcast ICMP ignore setting"
   run_command "sysctl -w net.ipv4.route.flush=1" "3.3.4 Flush IPv4 routing table"
 
 
+
   # =====================[ SECTION 3.3.5: Disable ICMP Redirect Acceptance ]=====================
   start_section "3.3.5"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+  SYSCTL_IPV6="/etc/sysctl.d/60-netipv6_sysctl.conf"
+
+  # Ensure IPv4 config file exists
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.5 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently disable IPv4 ICMP redirect acceptance
-  run_command "echo 'net.ipv4.conf.all.accept_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.5 Set net.ipv4.conf.all.accept_redirects = 0"
-  run_command "echo 'net.ipv4.conf.default.accept_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.5 Set net.ipv4.conf.default.accept_redirects = 0"
+  if ! grep -q '^net.ipv4.conf.all.accept_redirects = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.all.accept_redirects = 0' >> $SYSCTL_IPV4" "3.3.5 Set net.ipv4.conf.all.accept_redirects = 0"
+  else
+    echo "3.3.5 skipped: net.ipv4.conf.all.accept_redirects already set in $SYSCTL_IPV4"
+  fi
+
+  if ! grep -q '^net.ipv4.conf.default.accept_redirects = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.default.accept_redirects = 0' >> $SYSCTL_IPV4" "3.3.5 Set net.ipv4.conf.default.accept_redirects = 0"
+  else
+    echo "3.3.5 skipped: net.ipv4.conf.default.accept_redirects already set in $SYSCTL_IPV4"
+  fi
 
   # Apply IPv4 settings immediately
   run_command "sysctl -w net.ipv4.conf.all.accept_redirects=0" "3.3.5 Apply net.ipv4.conf.all.accept_redirects"
@@ -1286,9 +1370,24 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # Check if IPv6 is enabled
   if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+
+    # Ensure IPv6 config file exists
+    if [ ! -f "$SYSCTL_IPV6" ]; then
+      run_command "touch $SYSCTL_IPV6" "3.3.5 Create $SYSCTL_IPV6"
+    fi
+
     # Persistently disable IPv6 ICMP redirect acceptance
-    run_command "echo 'net.ipv6.conf.all.accept_redirects = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.5 Set net.ipv6.conf.all.accept_redirects = 0"
-    run_command "echo 'net.ipv6.conf.default.accept_redirects = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.5 Set net.ipv6.conf.default.accept_redirects = 0"
+    if ! grep -q '^net.ipv6.conf.all.accept_redirects = 0' "$SYSCTL_IPV6"; then
+      run_command "echo 'net.ipv6.conf.all.accept_redirects = 0' >> $SYSCTL_IPV6" "3.3.5 Set net.ipv6.conf.all.accept_redirects = 0"
+    else
+      echo "3.3.5 skipped: net.ipv6.conf.all.accept_redirects already set in $SYSCTL_IPV6"
+    fi
+
+    if ! grep -q '^net.ipv6.conf.default.accept_redirects = 0' "$SYSCTL_IPV6"; then
+      run_command "echo 'net.ipv6.conf.default.accept_redirects = 0' >> $SYSCTL_IPV6" "3.3.5 Set net.ipv6.conf.default.accept_redirects = 0"
+    else
+      echo "3.3.5 skipped: net.ipv6.conf.default.accept_redirects already set in $SYSCTL_IPV6"
+    fi
 
     # Apply IPv6 settings immediately
     run_command "sysctl -w net.ipv6.conf.all.accept_redirects=0" "3.3.5 Apply net.ipv6.conf.all.accept_redirects"
@@ -1300,24 +1399,55 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # =====================[ UFW Override Handling ]=====================
   if [ -f /etc/ufw/sysctl.conf ]; then
-    run_command "echo 'net.ipv4.conf.all.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv4 setting in UFW sysctl.conf"
-    run_command "echo 'net.ipv4.conf.default.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv4 default setting in UFW sysctl.conf"
 
-    if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
-      run_command "echo 'net.ipv6.conf.all.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv6 setting in UFW sysctl.conf"
-      run_command "echo 'net.ipv6.conf.default.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv6 default setting in UFW sysctl.conf"
+    # Mirror IPv4 settings in UFW config
+    if ! grep -q '^net.ipv4.conf.all.accept_redirects = 0' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.all.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv4 setting in UFW sysctl.conf"
     fi
 
-    # Optional: prevent UFW from overriding system-wide sysctl
+    if ! grep -q '^net.ipv4.conf.default.accept_redirects = 0' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.default.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv4 default setting in UFW sysctl.conf"
+    fi
+
+    # Mirror IPv6 settings in UFW config if IPv6 is enabled
+    if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+      if ! grep -q '^net.ipv6.conf.all.accept_redirects = 0' /etc/ufw/sysctl.conf; then
+        run_command "echo 'net.ipv6.conf.all.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv6 setting in UFW sysctl.conf"
+      fi
+      if ! grep -q '^net.ipv6.conf.default.accept_redirects = 0' /etc/ufw/sysctl.conf; then
+        run_command "echo 'net.ipv6.conf.default.accept_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.5 Mirror IPv6 default setting in UFW sysctl.conf"
+      fi
+    fi
+
+    # Prevent UFW from overriding system-wide sysctl
     run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.5 Set IPT_SYSCTL=0 to respect system-wide sysctl"
   fi
+
+
+
 
   # =====================[ SECTION 3.3.6: Disable Secure ICMP Redirects ]=====================
   start_section "3.3.6"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Ensure IPv4 config file exists
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.6 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently disable secure ICMP redirects for IPv4
-  run_command "echo 'net.ipv4.conf.all.secure_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.6 Set net.ipv4.conf.all.secure_redirects = 0"
-  run_command "echo 'net.ipv4.conf.default.secure_redirects = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.6 Set net.ipv4.conf.default.secure_redirects = 0"
+  if ! grep -q '^net.ipv4.conf.all.secure_redirects = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.all.secure_redirects = 0' >> $SYSCTL_IPV4" "3.3.6 Set net.ipv4.conf.all.secure_redirects = 0"
+  else
+    echo "3.3.6 skipped: net.ipv4.conf.all.secure_redirects already set in $SYSCTL_IPV4"
+  fi
+
+  if ! grep -q '^net.ipv4.conf.default.secure_redirects = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.default.secure_redirects = 0' >> $SYSCTL_IPV4" "3.3.6 Set net.ipv4.conf.default.secure_redirects = 0"
+  else
+    echo "3.3.6 skipped: net.ipv4.conf.default.secure_redirects already set in $SYSCTL_IPV4"
+  fi
 
   # Apply settings immediately
   run_command "sysctl -w net.ipv4.conf.all.secure_redirects=0" "3.3.6 Apply net.ipv4.conf.all.secure_redirects"
@@ -1326,19 +1456,43 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # =====================[ UFW Override Handling ]=====================
   if [ -f /etc/ufw/sysctl.conf ]; then
-    run_command "echo 'net.ipv4.conf.all.secure_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.6 Mirror net.ipv4.conf.all.secure_redirects in UFW sysctl.conf"
-    run_command "echo 'net.ipv4.conf.default.secure_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.6 Mirror net.ipv4.conf.default.secure_redirects in UFW sysctl.conf"
 
-    # Optional: prevent UFW from overriding system-wide sysctl
+    if ! grep -q '^net.ipv4.conf.all.secure_redirects = 0' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.all.secure_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.6 Mirror net.ipv4.conf.all.secure_redirects in UFW sysctl.conf"
+    fi
+
+    if ! grep -q '^net.ipv4.conf.default.secure_redirects = 0' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.default.secure_redirects = 0' >> /etc/ufw/sysctl.conf" "3.3.6 Mirror net.ipv4.conf.default.secure_redirects in UFW sysctl.conf"
+    fi
+
+    # Prevent UFW from overriding system-wide sysctl
     run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.6 Set IPT_SYSCTL=0 to respect system-wide sysctl"
   fi
+
+
 
   # =====================[ SECTION 3.3.7: Enable Reverse Path Filtering ]=====================
   start_section "3.3.7"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Ensure IPv4 config file exists
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.7 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently enable reverse path filtering
-  run_command "echo 'net.ipv4.conf.all.rp_filter = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.7 Set net.ipv4.conf.all.rp_filter = 1"
-  run_command "echo 'net.ipv4.conf.default.rp_filter = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.7 Set net.ipv4.conf.default.rp_filter = 1"
+  if ! grep -q '^net.ipv4.conf.all.rp_filter = 1' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.all.rp_filter = 1' >> $SYSCTL_IPV4" "3.3.7 Set net.ipv4.conf.all.rp_filter = 1"
+  else
+    echo "3.3.7 skipped: net.ipv4.conf.all.rp_filter already set in $SYSCTL_IPV4"
+  fi
+
+  if ! grep -q '^net.ipv4.conf.default.rp_filter = 1' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.default.rp_filter = 1' >> $SYSCTL_IPV4" "3.3.7 Set net.ipv4.conf.default.rp_filter = 1"
+  else
+    echo "3.3.7 skipped: net.ipv4.conf.default.rp_filter already set in $SYSCTL_IPV4"
+  fi
 
   # Apply settings immediately
   run_command "sysctl -w net.ipv4.conf.all.rp_filter=1" "3.3.7 Apply net.ipv4.conf.all.rp_filter"
@@ -1347,19 +1501,44 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # =====================[ UFW Override Handling ]=====================
   if [ -f /etc/ufw/sysctl.conf ]; then
-    run_command "echo 'net.ipv4.conf.all.rp_filter = 1' >> /etc/ufw/sysctl.conf" "3.3.7 Mirror net.ipv4.conf.all.rp_filter in UFW sysctl.conf"
-    run_command "echo 'net.ipv4.conf.default.rp_filter = 1' >> /etc/ufw/sysctl.conf" "3.3.7 Mirror net.ipv4.conf.default.rp_filter in UFW sysctl.conf"
 
-    # Optional: prevent UFW from overriding system-wide sysctl
+    if ! grep -q '^net.ipv4.conf.all.rp_filter = 1' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.all.rp_filter = 1' >> /etc/ufw/sysctl.conf" "3.3.7 Mirror net.ipv4.conf.all.rp_filter in UFW sysctl.conf"
+    fi
+
+    if ! grep -q '^net.ipv4.conf.default.rp_filter = 1' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.default.rp_filter = 1' >> /etc/ufw/sysctl.conf" "3.3.7 Mirror net.ipv4.conf.default.rp_filter in UFW sysctl.conf"
+    fi
+
+    # Prevent UFW from overriding system-wide sysctl
     run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.7 Set IPT_SYSCTL=0 to respect system-wide sysctl"
   fi
+
+
 
   # =====================[ SECTION 3.3.8: Disable Source Routed Packet Acceptance ]=====================
   start_section "3.3.8"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+  SYSCTL_IPV6="/etc/sysctl.d/60-netipv6_sysctl.conf"
+
+  # Ensure IPv4 config file exists
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.8 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently disable source routed packets for IPv4
-  run_command "echo 'net.ipv4.conf.all.accept_source_route = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.8 Set net.ipv4.conf.all.accept_source_route = 0"
-  run_command "echo 'net.ipv4.conf.default.accept_source_route = 0' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.8 Set net.ipv4.conf.default.accept_source_route = 0"
+  if ! grep -q '^net.ipv4.conf.all.accept_source_route = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.all.accept_source_route = 0' >> $SYSCTL_IPV4" "3.3.8 Set net.ipv4.conf.all.accept_source_route = 0"
+  else
+    echo "3.3.8 skipped: net.ipv4.conf.all.accept_source_route already set in $SYSCTL_IPV4"
+  fi
+
+  if ! grep -q '^net.ipv4.conf.default.accept_source_route = 0' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.default.accept_source_route = 0' >> $SYSCTL_IPV4" "3.3.8 Set net.ipv4.conf.default.accept_source_route = 0"
+  else
+    echo "3.3.8 skipped: net.ipv4.conf.default.accept_source_route already set in $SYSCTL_IPV4"
+  fi
 
   # Apply IPv4 settings immediately
   run_command "sysctl -w net.ipv4.conf.all.accept_source_route=0" "3.3.8 Apply net.ipv4.conf.all.accept_source_route"
@@ -1368,9 +1547,24 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # Check if IPv6 is enabled
   if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+
+    # Ensure IPv6 config file exists
+    if [ ! -f "$SYSCTL_IPV6" ]; then
+      run_command "touch $SYSCTL_IPV6" "3.3.8 Create $SYSCTL_IPV6"
+    fi
+
     # Persistently disable source routed packets for IPv6
-    run_command "echo 'net.ipv6.conf.all.accept_source_route = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.8 Set net.ipv6.conf.all.accept_source_route = 0"
-    run_command "echo 'net.ipv6.conf.default.accept_source_route = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.8 Set net.ipv6.conf.default.accept_source_route = 0"
+    if ! grep -q '^net.ipv6.conf.all.accept_source_route = 0' "$SYSCTL_IPV6"; then
+      run_command "echo 'net.ipv6.conf.all.accept_source_route = 0' >> $SYSCTL_IPV6" "3.3.8 Set net.ipv6.conf.all.accept_source_route = 0"
+    else
+      echo "3.3.8 skipped: net.ipv6.conf.all.accept_source_route already set in $SYSCTL_IPV6"
+    fi
+
+    if ! grep -q '^net.ipv6.conf.default.accept_source_route = 0' "$SYSCTL_IPV6"; then
+      run_command "echo 'net.ipv6.conf.default.accept_source_route = 0' >> $SYSCTL_IPV6" "3.3.8 Set net.ipv6.conf.default.accept_source_route = 0"
+    else
+      echo "3.3.8 skipped: net.ipv6.conf.default.accept_source_route already set in $SYSCTL_IPV6"
+    fi
 
     # Apply IPv6 settings immediately
     run_command "sysctl -w net.ipv6.conf.all.accept_source_route=0" "3.3.8 Apply net.ipv6.conf.all.accept_source_route"
@@ -1382,24 +1576,52 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # =====================[ UFW Override Handling ]=====================
   if [ -f /etc/ufw/sysctl.conf ]; then
-    run_command "echo 'net.ipv4.conf.all.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv4.conf.all.accept_source_route in UFW sysctl.conf"
-    run_command "echo 'net.ipv4.conf.default.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv4.conf.default.accept_source_route in UFW sysctl.conf"
 
-    if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
-      run_command "echo 'net.ipv6.conf.all.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv6.conf.all.accept_source_route in UFW sysctl.conf"
-      run_command "echo 'net.ipv6.conf.default.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv6.conf.default.accept_source_route in UFW sysctl.conf"
+    if ! grep -q '^net.ipv4.conf.all.accept_source_route = 0' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.all.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv4.conf.all.accept_source_route in UFW sysctl.conf"
     fi
 
-    # Optional: prevent UFW from overriding system-wide sysctl
+    if ! grep -q '^net.ipv4.conf.default.accept_source_route = 0' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.default.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv4.conf.default.accept_source_route in UFW sysctl.conf"
+    fi
+
+    if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+      if ! grep -q '^net.ipv6.conf.all.accept_source_route = 0' /etc/ufw/sysctl.conf; then
+        run_command "echo 'net.ipv6.conf.all.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv6.conf.all.accept_source_route in UFW sysctl.conf"
+      fi
+      if ! grep -q '^net.ipv6.conf.default.accept_source_route = 0' /etc/ufw/sysctl.conf; then
+        run_command "echo 'net.ipv6.conf.default.accept_source_route = 0' >> /etc/ufw/sysctl.conf" "3.3.8 Mirror net.ipv6.conf.default.accept_source_route in UFW sysctl.conf"
+      fi
+    fi
+
+    # Prevent UFW from overriding system-wide sysctl
     run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.8 Set IPT_SYSCTL=0 to respect system-wide sysctl"
   fi
+
+
 
   # =====================[ SECTION 3.3.9: Enable Logging of Suspicious Packets ]=====================
   start_section "3.3.9"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Ensure IPv4 config file exists
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.9 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently enable logging of martian packets for IPv4
-  run_command "echo 'net.ipv4.conf.all.log_martians = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.9 Set net.ipv4.conf.all.log_martians = 1"
-  run_command "echo 'net.ipv4.conf.default.log_martians = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.9 Set net.ipv4.conf.default.log_martians = 1"
+  if ! grep -q '^net.ipv4.conf.all.log_martians = 1' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.all.log_martians = 1' >> $SYSCTL_IPV4" "3.3.9 Set net.ipv4.conf.all.log_martians = 1"
+  else
+    echo "3.3.9 skipped: net.ipv4.conf.all.log_martians already set in $SYSCTL_IPV4"
+  fi
+
+  if ! grep -q '^net.ipv4.conf.default.log_martians = 1' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.conf.default.log_martians = 1' >> $SYSCTL_IPV4" "3.3.9 Set net.ipv4.conf.default.log_martians = 1"
+  else
+    echo "3.3.9 skipped: net.ipv4.conf.default.log_martians already set in $SYSCTL_IPV4"
+  fi
 
   # Apply settings immediately
   run_command "sysctl -w net.ipv4.conf.all.log_martians=1" "3.3.9 Apply net.ipv4.conf.all.log_martians"
@@ -1408,18 +1630,36 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # =====================[ UFW Override Handling ]=====================
   if [ -f /etc/ufw/sysctl.conf ]; then
-    run_command "echo 'net.ipv4.conf.all.log_martians = 1' >> /etc/ufw/sysctl.conf" "3.3.9 Mirror net.ipv4.conf.all.log_martians in UFW sysctl.conf"
-    run_command "echo 'net.ipv4.conf.default.log_martians = 1' >> /etc/ufw/sysctl.conf" "3.3.9 Mirror net.ipv4.conf.default.log_martians in UFW sysctl.conf"
 
-    # Optional: prevent UFW from overriding system-wide sysctl
+    if ! grep -q '^net.ipv4.conf.all.log_martians = 1' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.all.log_martians = 1' >> /etc/ufw/sysctl.conf" "3.3.9 Mirror net.ipv4.conf.all.log_martians in UFW sysctl.conf"
+    fi
+
+    if ! grep -q '^net.ipv4.conf.default.log_martians = 1' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.conf.default.log_martians = 1' >> /etc/ufw/sysctl.conf" "3.3.9 Mirror net.ipv4.conf.default.log_martians in UFW sysctl.conf"
+    fi
+
+    # Prevent UFW from overriding system-wide sysctl
     run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.9 Set IPT_SYSCTL=0 to respect system-wide sysctl"
   fi
+
 
   # =====================[ SECTION 3.3.10: Enable TCP SYN Cookies ]=====================
   start_section "3.3.10"
 
+  SYSCTL_IPV4="/etc/sysctl.d/60-netipv4_sysctl.conf"
+
+  # Ensure IPv4 config file exists
+  if [ ! -f "$SYSCTL_IPV4" ]; then
+    run_command "touch $SYSCTL_IPV4" "3.3.10 Create $SYSCTL_IPV4"
+  fi
+
   # Persistently enable TCP SYN cookies
-  run_command "echo 'net.ipv4.tcp_syncookies = 1' >> /etc/sysctl.d/60-netipv4_sysctl.conf" "3.3.10 Set net.ipv4.tcp_syncookies = 1"
+  if ! grep -q '^net.ipv4.tcp_syncookies = 1' "$SYSCTL_IPV4"; then
+    run_command "echo 'net.ipv4.tcp_syncookies = 1' >> $SYSCTL_IPV4" "3.3.10 Set net.ipv4.tcp_syncookies = 1"
+  else
+    echo "3.3.10 skipped: net.ipv4.tcp_syncookies already set in $SYSCTL_IPV4"
+  fi
 
   # Apply setting immediately
   run_command "sysctl -w net.ipv4.tcp_syncookies=1" "3.3.10 Apply net.ipv4.tcp_syncookies"
@@ -1427,20 +1667,42 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
   # =====================[ UFW Override Handling ]=====================
   if [ -f /etc/ufw/sysctl.conf ]; then
-    run_command "echo 'net.ipv4.tcp_syncookies = 1' >> /etc/ufw/sysctl.conf" "3.3.10 Mirror net.ipv4.tcp_syncookies in UFW sysctl.conf"
 
-    # Optional: prevent UFW from overriding system-wide sysctl
+    if ! grep -q '^net.ipv4.tcp_syncookies = 1' /etc/ufw/sysctl.conf; then
+      run_command "echo 'net.ipv4.tcp_syncookies = 1' >> /etc/ufw/sysctl.conf" "3.3.10 Mirror net.ipv4.tcp_syncookies in UFW sysctl.conf"
+    fi
+
+    # Prevent UFW from overriding system-wide sysctl
     run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.10 Set IPT_SYSCTL=0 to respect system-wide sysctl"
   fi
+
+
 
   # =====================[ SECTION 3.3.11: Disable IPv6 Router Advertisements ]=====================
   start_section "3.3.11"
 
+  SYSCTL_IPV6="/etc/sysctl.d/60-netipv6_sysctl.conf"
+
   # Check if IPv6 is enabled
   if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" -eq 0 ]; then
+
+    # Ensure IPv6 config file exists
+    if [ ! -f "$SYSCTL_IPV6" ]; then
+      run_command "touch $SYSCTL_IPV6" "3.3.11 Create $SYSCTL_IPV6"
+    fi
+
     # Persistently disable IPv6 router advertisements
-    run_command "echo 'net.ipv6.conf.all.accept_ra = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.11 Set net.ipv6.conf.all.accept_ra = 0"
-    run_command "echo 'net.ipv6.conf.default.accept_ra = 0' >> /etc/sysctl.d/60-netipv6_sysctl.conf" "3.3.11 Set net.ipv6.conf.default.accept_ra = 0"
+    if ! grep -q '^net.ipv6.conf.all.accept_ra = 0' "$SYSCTL_IPV6"; then
+      run_command "echo 'net.ipv6.conf.all.accept_ra = 0' >> $SYSCTL_IPV6" "3.3.11 Set net.ipv6.conf.all.accept_ra = 0"
+    else
+      echo "3.3.11 skipped: net.ipv6.conf.all.accept_ra already set in $SYSCTL_IPV6"
+    fi
+
+    if ! grep -q '^net.ipv6.conf.default.accept_ra = 0' "$SYSCTL_IPV6"; then
+      run_command "echo 'net.ipv6.conf.default.accept_ra = 0' >> $SYSCTL_IPV6" "3.3.11 Set net.ipv6.conf.default.accept_ra = 0"
+    else
+      echo "3.3.11 skipped: net.ipv6.conf.default.accept_ra already set in $SYSCTL_IPV6"
+    fi
 
     # Apply settings immediately
     run_command "sysctl -w net.ipv6.conf.all.accept_ra=0" "3.3.11 Apply net.ipv6.conf.all.accept_ra"
@@ -1449,16 +1711,24 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
 
     # =====================[ UFW Override Handling ]=====================
     if [ -f /etc/ufw/sysctl.conf ]; then
-      run_command "echo 'net.ipv6.conf.all.accept_ra = 0' >> /etc/ufw/sysctl.conf" "3.3.11 Mirror net.ipv6.conf.all.accept_ra in UFW sysctl.conf"
-      run_command "echo 'net.ipv6.conf.default.accept_ra = 0' >> /etc/ufw/sysctl.conf" "3.3.11 Mirror net.ipv6.conf.default.accept_ra in UFW sysctl.conf"
 
-      # Optional: prevent UFW from overriding system-wide sysctl
+      if ! grep -q '^net.ipv6.conf.all.accept_ra = 0' /etc/ufw/sysctl.conf; then
+        run_command "echo 'net.ipv6.conf.all.accept_ra = 0' >> /etc/ufw/sysctl.conf" "3.3.11 Mirror net.ipv6.conf.all.accept_ra in UFW sysctl.conf"
+      fi
+
+      if ! grep -q '^net.ipv6.conf.default.accept_ra = 0' /etc/ufw/sysctl.conf; then
+        run_command "echo 'net.ipv6.conf.default.accept_ra = 0' >> /etc/ufw/sysctl.conf" "3.3.11 Mirror net.ipv6.conf.default.accept_ra in UFW sysctl.conf"
+      fi
+
+      # Prevent UFW from overriding system-wide sysctl
       run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.11 Set IPT_SYSCTL=0 to respect system-wide sysctl"
     fi
+
   else
     log_message "3.3.11 IPv6 is disabled — skipping router advertisement configuration"
   fi
 fi
+
 
 ##############################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" == "4.2" || "$TARGET_SECTION" == "4.3" || "$TARGET_SECTION" == "4.4" ]]; then
