@@ -3499,21 +3499,32 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   # Remove any lines containing 'nologin' from /etc/shells
   run_command "sed -i '/nologin/d' /etc/shells" "5.4.3.1 Remove nologin entries from /etc/shells"
 
+
   # =====================[ SECTION 5.4.3.2: Ensure default user shell timeout is configured ]=====================
   start_section "5.4.3.2"
-  
+
   # Secure TMOUT configuration block
   TMOUT_CONFIG=$'\n# Set TMOUT only if not already defined\nif [ -z "$TMOUT" ]; then\n  TMOUT=900\n  readonly TMOUT\n  export TMOUT\nfi\n'
-  
-  # Remove any existing TMOUT lines and append secure block to /etc/profile
-  run_command "sed -i '/TMOUT=/d' /etc/profile && echo \"$TMOUT_CONFIG\" >> /etc/profile" "5.4.3.2 Set TMOUT block in /etc/profile"
-  
+
+  # Remove any existing TMOUT lines from /etc/profile and append secure block only if not present
+  if ! grep -q 'readonly TMOUT' /etc/profile; then
+    run_command "sed -i '/TMOUT=/d' /etc/profile && echo \"$TMOUT_CONFIG\" >> /etc/profile" "5.4.3.2 Set TMOUT block in /etc/profile"
+  else
+    echo "5.4.3.2 skipped: TMOUT block already present in /etc/profile"
+  fi
+
   # Create or overwrite /etc/profile.d/timeout.sh with the secure block
-  run_command "echo \"$TMOUT_CONFIG\" > /etc/profile.d/timeout.sh" "5.4.3.2 Create /etc/profile.d/timeout.sh with TMOUT block"
-  
+  if [ ! -f /etc/profile.d/timeout.sh ] || ! grep -q 'readonly TMOUT' /etc/profile.d/timeout.sh; then
+    run_command "echo \"$TMOUT_CONFIG\" > /etc/profile.d/timeout.sh" "5.4.3.2 Create /etc/profile.d/timeout.sh with TMOUT block"
+  else
+    echo "5.4.3.2 skipped: /etc/profile.d/timeout.sh already contains TMOUT block"
+  fi
+
   # Ensure correct permissions
   run_command "chmod 644 /etc/profile.d/timeout.sh" "5.4.3.2 Set permissions on timeout.sh"
   run_command "chown root:root /etc/profile.d/timeout.sh" "5.4.3.2 Set ownership on timeout.sh"
+
+
 
   # =====================[ SECTION 5.4.3.3: Ensure default user umask is configured ]=====================
   start_section "5.4.3.3"
