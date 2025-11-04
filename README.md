@@ -45,12 +45,12 @@ sudo apt install auditd ufw
 
 2. Make the script executable:
    ```bash
-   chmod +x cis-ubuntu-24.04-apply-script.sh
+   chmod +x cis-hardening-ubuntu-24.sh
    ```
 
 3. Run the script with root privileges:
    ```bash
-   sudo ./cis-ubuntu-24.04-apply-script.sh
+   sudo ./cis-hardening-ubuntu-24.sh
    ```
 
 ---
