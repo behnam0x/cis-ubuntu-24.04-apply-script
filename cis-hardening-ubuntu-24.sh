@@ -3868,7 +3868,7 @@ mail.err                       /var/log/mail.err
 cron.*                         /var/log/cron
 *.=warning;*.=err              -/var/log/warn
 *.crit                         /var/log/warn
-*.*;mail.none;news.none        -/var/log/messages
+*.*;mail.none;news.none        /var/log/messages
 kern.*                         /var/log/kern.log
 daemon.*                       /var/log/daemon.log
 user.*                         /var/log/user.log
