@@ -27,7 +27,6 @@ CURRENT_SECTION=""
 declare -A SUCCESS_COUNT
 declare -A ERROR_COUNT
 # Resolve script directory once globally
-# Resolve script directory once globally
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEB_DIR="/home/harden/packages"
 
@@ -3554,69 +3553,60 @@ fi
 
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" || "$TARGET_SECTION" == 6.1 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" || "$TARGET_SECTION" == "6.1" ]]; then
+
   # =====================[ SECTION 6.1.1.1: Ensure journald service is enabled and active ]=====================
   start_section "6.1.1.1"
-  
-  # Unmask, start, and enable systemd-journald service
+
   run_command "systemctl unmask systemd-journald.service" "6.1.1.1 Unmask journald service"
   run_command "systemctl start systemd-journald.service" "6.1.1.1 Start journald service"
   run_command "systemctl enable systemd-journald.service" "6.1.1.1 Enable journald service"
-  
+
   # =====================[ SECTION 6.1.1.2: Ensure journald log file access is configured ]=====================
   start_section "6.1.1.2"
-  
-  # Copy default journald tmpfiles config to override location
-  run_command "cp /usr/lib/tmpfiles.d/systemd.conf /etc/tmpfiles.d/systemd.conf" "6.1.1.2 Copy journald tmpfiles config"
-  
-  # Update permissions for journald log files to 0640
+
+  if [ ! -f /etc/tmpfiles.d/systemd.conf ]; then
+    run_command "cp /usr/lib/tmpfiles.d/systemd.conf /etc/tmpfiles.d/systemd.conf" "6.1.1.2 Copy journald tmpfiles config"
+  else
+    echo "6.1.1.2 skipped: /etc/tmpfiles.d/systemd.conf already exists"
+  fi
+
   run_command "sed -i 's|^f /run/log/journal/%m/system.journal .*|f /run/log/journal/%m/system.journal 0640 root systemd-journal -|' /etc/tmpfiles.d/systemd.conf" "6.1.1.2 Set journald log file mode to 0640"
-  
-  # Apply the updated tmpfiles configuration
   run_command "systemd-tmpfiles --create /etc/tmpfiles.d/systemd.conf" "6.1.1.2 Apply journald tmpfiles config"
-  
+
   # =====================[ SECTION 6.1.1.3: Ensure journald log file rotation is configured ]=====================
   start_section "6.1.1.3"
-  
-  # Define journald rotation settings
-  run_command '
-  a_settings=("SystemMaxUse=1G" "SystemKeepFree=500M" "RuntimeMaxUse=200M" "RuntimeKeepFree=50M" "MaxFileSec=1month")
-  
-  conf_file="/etc/systemd/journald.conf.d/60-journald.conf"
-  
-  # Ensure drop-in directory exists
+
+  JOURNALD_CONF="/etc/systemd/journald.conf.d/60-journald.conf"
   mkdir -p /etc/systemd/journald.conf.d/
-  
-  # Create or update the drop-in config file
-  if grep -q "^\s*
-  
-  \[Journal\]
-  
-  " "$conf_file" 2>/dev/null; then
-    # Append settings if [Journal] already exists
-    for setting in "${a_settings[@]}"; do
-      grep -q "^$setting" "$conf_file" || echo "$setting" >> "$conf_file"
-    done
-  else
-    # Create new file with [Journal] section and settings
-    {
-      echo "[Journal]"
-      for setting in "${a_settings[@]}"; do
-        echo "$setting"
+
+  run_command "bash -c '
+    SETTINGS=(\"SystemMaxUse=1G\" \"SystemKeepFree=500M\" \"RuntimeMaxUse=200M\" \"RuntimeKeepFree=50M\" \"MaxFileSec=1month\")
+    if grep -q \"^
+
+\[Journal\]
+
+\" \"$JOURNALD_CONF\" 2>/dev/null; then
+      for setting in \"\${SETTINGS[@]}\"; do
+        grep -q \"^\$setting\" \"$JOURNALD_CONF\" || echo \"\$setting\" >> \"$JOURNALD_CONF\"
       done
-    } > "$conf_file"
-  fi
-  ' "6.1.1.3 Create journald drop-in config for log rotation"
-  
-  # Reload journald to apply new settings
+    else
+      {
+        echo \"[Journal]\"
+        for setting in \"\${SETTINGS[@]}\"; do
+          echo \"\$setting\"
+        done
+      } > \"$JOURNALD_CONF\"
+    fi
+  '" "6.1.1.3 Create journald drop-in config for log rotation"
+
   run_command "systemctl reload-or-restart systemd-journald" "6.1.1.3 Reload journald with updated rotation settings"
-  
+
   # =====================[ SECTION 6.1.1.4: Ensure only one logging system is in use (configured for ALL) ]=====================
   start_section "6.1.1.4"
-  
-  # Set logging system preference: journald, rsyslog, or all
+
   LOGGING_SYSTEM="all"
-  
+
   if [ "$LOGGING_SYSTEM" = "journald" ]; then
     run_command "systemctl unmask systemd-journald.service" "6.1.1.4 Unmask journald"
     run_command "systemctl enable systemd-journald.service" "6.1.1.4 Enable journald"
@@ -3624,14 +3614,14 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" || "$TARGET_SECTION" 
     run_command "systemctl stop rsyslog.service" "6.1.1.4 Stop rsyslog"
     run_command "systemctl disable rsyslog.service" "6.1.1.4 Disable rsyslog"
     run_command "systemctl mask rsyslog.service" "6.1.1.4 Mask rsyslog"
-  
+
   elif [ "$LOGGING_SYSTEM" = "rsyslog" ]; then
     run_command "systemctl enable rsyslog.service" "6.1.1.4 Enable rsyslog"
     run_command "systemctl start rsyslog.service" "6.1.1.4 Start rsyslog"
     run_command "systemctl stop systemd-journald.service" "6.1.1.4 Stop journald"
     run_command "systemctl disable systemd-journald.service" "6.1.1.4 Disable journald"
     run_command "systemctl mask systemd-journald.service" "6.1.1.4 Mask journald"
-  
+
   elif [ "$LOGGING_SYSTEM" = "all" ]; then
     run_command "systemctl unmask systemd-journald.service" "6.1.1.4 Unmask journald"
     run_command "systemctl enable systemd-journald.service" "6.1.1.4 Enable journald"
@@ -3643,32 +3633,27 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.1" || "$TARGET_SECTION" 
     end_section 1
     exit 1
   fi
-  
+
   end_section 0
 fi
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2.1.1" || "$TARGET_SECTION" == "6.1.2" || "$TARGET_SECTION" == "6.1" ]]; then
+
   # =====================[ SECTION 6.1.2.1.1: Ensure systemd-journal-remote is installed ]=====================
   start_section "6.1.2.1.1"
 
-  # Helper: Check if system is online
   is_online() {
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  # Resolve script directory and offline package path
-
-
-  # Check if systemd-journal-remote is already installed
-  if dpkg -s systemd-journal-remote >/dev/null 2>&1; then
+  if dpkg-query -W -f='${Status}' systemd-journal-remote 2>/dev/null | grep -q "install ok installed"; then
     log_message "6.1.2.1.1 [✓] systemd-journal-remote is already installed"
   else
     if is_online; then
       run_command "apt install -y systemd-journal-remote" "6.1.2.1.1 Install systemd-journal-remote"
     else
       log_message "6.1.2.1.1 System appears to be offline — attempting offline install"
-
       if [ -d "$DEB_DIR" ]; then
         file=$(find "$DEB_DIR" -type f -name "systemd-journal-remote_*.deb" | head -n 1)
         if [[ -n "$file" ]]; then
@@ -3684,125 +3669,86 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2.1.1" || "$TARGET_SECTI
     fi
   fi
 
-
   # =====================[ SECTION 6.1.2.1.2: Ensure systemd-journal-upload authentication is configured ]=====================
   start_section "6.1.2.1.2"
-  
-  # Set the remote upload destination
+
   URL="192.168.50.42"
-  
-  # Configure systemd-journal-upload authentication
-  run_command "
-  a_settings=(\"URL=$URL\" \\
-  \"ServerKeyFile=/etc/ssl/private/journal-upload.pem\" \\
-  \"ServerCertificateFile=/etc/ssl/certs/journal-upload.pem\" \\
-  \"TrustedCertificateFile=/etc/ssl/ca/trusted.pem\")
-  
-  conf_file=\"/etc/systemd/journal-upload.conf.d/60-journald_upload.conf\"
-  
+  CONF_FILE="/etc/systemd/journal-upload.conf.d/60-journald_upload.conf"
   mkdir -p /etc/systemd/journal-upload.conf.d/
-  
-  if grep -q \"^\\s*\
-  
-  \[Upload\\]
-  
-  \" \"\$conf_file\" 2>/dev/null; then
-    for setting in \"\${a_settings[@]}\"; do
-      grep -q \"^\$setting\" \"\$conf_file\" || echo \"\$setting\" >> \"\$conf_file\"
-    done
-  else
-    {
-      echo \"[Upload]\"
-      for setting in \"\${a_settings[@]}\"; do
-        echo \"\$setting\"
-      done
-    } > \"\$conf_file\"
-  fi
-  " "6.1.2.1.2 Configure systemd-journal-upload authentication"
-  
-  # Reload the journal-upload service to apply changes
-  run_command "systemctl reload-or-restart systemd-journal-upload" "6.1.2.1.2 Reload systemd-journal-upload"
-  
-  # =====================[ SECTION 6.1.2.1.3: Ensure systemd-journal-upload is enabled and active ]=====================
-  start_section "6.1.2.1.3"
-  
-  # Unmask, enable, and start systemd-journal-upload
-  run_command "systemctl unmask systemd-journal-upload.service" "6.1.2.1.3 Unmask systemd-journal-upload"
-  run_command "systemctl --now enable systemd-journal-upload.service" "6.1.2.1.3 Enable and start systemd-journal-upload"
-  
-  # =====================[ SECTION 6.1.2.1.4: Ensure systemd-journal-remote service is not in use ]=====================
-  start_section "6.1.2.1.4"
-  
-  # Stop and mask systemd-journal-remote service and socket
-  run_command "systemctl stop systemd-journal-remote.socket systemd-journal-remote.service" "6.1.2.1.4 Stop systemd-journal-remote"
-  run_command "systemctl mask systemd-journal-remote.socket systemd-journal-remote.service" "6.1.2.1.4 Mask systemd-journal-remote"
-  
-  # =====================[ SECTION 6.1.2.2: Ensure journald ForwardToSyslog is disabled ]=====================
-  start_section "6.1.2.2"
-  
-  # Configure journald to disable forwarding to syslog
-  run_command '
-  a_settings=("ForwardToSyslog=no")
-  
-  conf_file="/etc/systemd/journald.conf.d/60-journald.conf"
-  
-  # Ensure drop-in directory exists
-  mkdir -p /etc/systemd/journald.conf.d/
-  
-  # Create or update the drop-in config file
-  if grep -q "^\s*
-  
-  \[Journal\]
-  
-  " "$conf_file" 2>/dev/null; then
-    for setting in "${a_settings[@]}"; do
-      grep -q "^$setting" "$conf_file" || echo "$setting" >> "$conf_file"
-    done
-  else
-    {
-      echo "[Journal]"
-      for setting in "${a_settings[@]}"; do
-        echo "$setting"
-      done
-    } > "$conf_file"
-  fi
-  ' "6.1.2.2 Disable ForwardToSyslog in journald"
-  
-  # Reload journald to apply the new setting
-  run_command "systemctl reload-or-restart systemd-journald" "6.1.2.2 Reload journald with updated ForwardToSyslog setting"
-  
-  # =====================[ SECTION 6.1.2.3: Ensure journald Compress is configured ]=====================
-  start_section "6.1.2.3"
-  
-  # Choose your logging system: journald, rsyslog, or all
-  LOGGING_SYSTEM="journald"
-  
-  if [ "$LOGGING_SYSTEM" = "journald" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
-    run_command '
-    a_settings=("Compress=yes")
-  
-    conf_file="/etc/systemd/journald.conf.d/60-journald.conf"
-  
-    mkdir -p /etc/systemd/journald.conf.d/
-  
-    if grep -q "^\s*
-  
-  \[Journal\]
-  
-  " "$conf_file" 2>/dev/null; then
-      for setting in "${a_settings[@]}"; do
-        grep -q "^$setting" "$conf_file" || echo "$setting" >> "$conf_file"
+
+  run_command "bash -c '
+    SETTINGS=(\"URL=$URL\" \"ServerKeyFile=/etc/ssl/private/journal-upload.pem\" \"ServerCertificateFile=/etc/ssl/certs/journal-upload.pem\" \"TrustedCertificateFile=/etc/ssl/ca/trusted.pem\")
+    if grep -q \"^
+
+\[Upload\]
+
+\" \"$CONF_FILE\" 2>/dev/null; then
+      for setting in \"\${SETTINGS[@]}\"; do
+        grep -q \"^\$setting\" \"$CONF_FILE\" || echo \"\$setting\" >> \"$CONF_FILE\"
       done
     else
       {
-        echo "[Journal]"
-        for setting in "${a_settings[@]}"; do
-          echo "$setting"
+        echo \"[Upload]\"
+        for setting in \"\${SETTINGS[@]}\"; do
+          echo \"\$setting\"
         done
-      } > "$conf_file"
+      } > \"$CONF_FILE\"
     fi
-    ' "6.1.2.3 Enable journald compression"
-  
+  '" "6.1.2.1.2 Configure systemd-journal-upload authentication"
+
+  run_command "systemctl reload-or-restart systemd-journal-upload" "6.1.2.1.2 Reload systemd-journal-upload"
+
+  # =====================[ SECTION 6.1.2.1.3: Ensure systemd-journal-upload is enabled and active ]=====================
+  start_section "6.1.2.1.3"
+
+  run_command "systemctl unmask systemd-journal-upload.service" "6.1.2.1.3 Unmask systemd-journal-upload"
+  run_command "systemctl --now enable systemd-journal-upload.service" "6.1.2.1.3 Enable and start systemd-journal-upload"
+
+  # =====================[ SECTION 6.1.2.1.4: Ensure systemd-journal-remote service is not in use ]=====================
+  start_section "6.1.2.1.4"
+
+  run_command "systemctl stop systemd-journal-remote.socket systemd-journal-remote.service" "6.1.2.1.4 Stop systemd-journal-remote"
+  run_command "systemctl mask systemd-journal-remote.socket systemd-journal-remote.service" "6.1.2.1.4 Mask systemd-journal-remote"
+
+  # =====================[ SECTION 6.1.2.2: Ensure journald ForwardToSyslog is disabled ]=====================
+  start_section "6.1.2.2"
+
+  CONF_FILE="/etc/systemd/journald.conf.d/60-journald.conf"
+  mkdir -p /etc/systemd/journald.conf.d/
+
+  run_command "bash -c '
+    SETTING=\"ForwardToSyslog=no\"
+    if grep -q \"^
+
+\[Journal\]
+
+\" \"$CONF_FILE\" 2>/dev/null; then
+      grep -q \"^\$SETTING\" \"$CONF_FILE\" || echo \"\$SETTING\" >> \"$CONF_FILE\"
+    else
+      echo -e \"[Journal]\\n\$SETTING\" > \"$CONF_FILE\"
+    fi
+  '" "6.1.2.2 Disable ForwardToSyslog in journald"
+
+  run_command "systemctl reload-or-restart systemd-journald" "6.1.2.2 Reload journald with updated ForwardToSyslog setting"
+
+  # =====================[ SECTION 6.1.2.3: Ensure journald Compress is configured ]=====================
+  start_section "6.1.2.3"
+
+  LOGGING_SYSTEM="journald"
+  if [ "$LOGGING_SYSTEM" = "journald" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
+    run_command "bash -c '
+      SETTING=\"Compress=yes\"
+      if grep -q \"^
+
+\[Journal\]
+
+\" \"$CONF_FILE\" 2>/dev/null; then
+        grep -q \"^\$SETTING\" \"$CONF_FILE\" || echo \"\$SETTING\" >> \"$CONF_FILE\"
+      else
+        echo -e \"[Journal]\\n\$SETTING\" > \"$CONF_FILE\"
+      fi
+    '" "6.1.2.3 Enable journald compression"
+
     run_command "systemctl reload-or-restart systemd-journald" "6.1.2.3 Reload journald with Compress=yes"
   else
     echo "6.1.2.3 skipped: journald is not the preferred logging system"
@@ -3810,41 +3756,29 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2.1.1" || "$TARGET_SECTI
 
   # =====================[ SECTION 6.1.2.4: Ensure journald Storage is configured ]=====================
   start_section "6.1.2.4"
-  
-  # Set your logging system: journald, rsyslog, or all
+
   LOGGING_SYSTEM="journald"
-  
   if [ "$LOGGING_SYSTEM" = "journald" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
-    run_command '
-    a_settings=("Storage=persistent")
-  
-    conf_file="/etc/systemd/journald.conf.d/60-journald.conf"
-  
-    mkdir -p /etc/systemd/journald.conf.d/
-  
-    if grep -q "^\s*
-  
-  \[Journal\]
-  
-  " "$conf_file" 2>/dev/null; then
-      for setting in "${a_settings[@]}"; do
-        grep -q "^$setting" "$conf_file" || echo "$setting" >> "$conf_file"
-      done
-    else
-      {
-        echo "[Journal]"
-        for setting in "${a_settings[@]}"; do
-          echo "$setting"
-        done
-      } > "$conf_file"
-    fi
-    ' "6.1.2.4 Set journald Storage=persistent"
-  
+    run_command "bash -c '
+      SETTING=\"Storage=persistent\"
+      if grep -q \"^
+
+\[Journal\]
+
+\" \"$CONF_FILE\" 2>/dev/null; then
+        grep -q \"^\$SETTING\" \"$CONF_FILE\" || echo \"\$SETTING\" >> \"$CONF_FILE\"
+      else
+        echo -e \"[Journal]\\n\$SETTING\" > \"$CONF_FILE\"
+      fi
+    '" "6.1.2.4 Set journald Storage=persistent"
+
     run_command "systemctl reload-or-restart systemd-journald" "6.1.2.4 Reload journald with Storage=persistent"
   else
     echo "6.1.2.4 skipped: journald is not the preferred logging system"
   fi
+
 fi
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" == "6.1" ]]; then
@@ -3852,23 +3786,17 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" 
   # =====================[ SECTION 6.1.3.1: Ensure rsyslog is installed ]=====================
   start_section "6.1.3.1"
 
-  # Helper: Check if system is online
   is_online() {
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  # Resolve script directory and offline package path
-
-
-  # Check if rsyslog is already installed
-  if dpkg -s rsyslog >/dev/null 2>&1; then
+  if dpkg-query -W -f='${Status}' rsyslog 2>/dev/null | grep -q "install ok installed"; then
     log_message "6.1.3.1 [✓] rsyslog is already installed"
   else
     if is_online; then
       run_command "apt install -y rsyslog" "6.1.3.1 Install rsyslog"
     else
       log_message "6.1.3.1 System appears to be offline — attempting offline rsyslog install"
-
       if [ -d "$DEB_DIR" ]; then
         file=$(find "$DEB_DIR" -type f -name "rsyslog_*.deb" | head -n 1)
         if [[ -n "$file" ]]; then
@@ -3884,12 +3812,10 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" 
     fi
   fi
 
-
-
   # =====================[ SECTION 6.1.3.2: Ensure rsyslog service is enabled and active ]=====================
   start_section "6.1.3.2"
   LOGGING_SYSTEM="rsyslog"
-  if [ "$LOGGING_SYSTEM" = "rsyslog" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
+  if [[ "$LOGGING_SYSTEM" == "rsyslog" || "$LOGGING_SYSTEM" == "all" ]]; then
     run_command "systemctl unmask rsyslog.service" "6.1.3.2 Unmask rsyslog"
     run_command "systemctl enable rsyslog.service" "6.1.3.2 Enable rsyslog"
     run_command "systemctl start rsyslog.service" "6.1.3.2 Start rsyslog"
@@ -3897,118 +3823,72 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.3" || "$TARGET_SECTION" 
     echo "6.1.3.2 skipped: rsyslog is not the preferred logging system"
   fi
 
-  # =====================[ SECTION 6.1.3.3: Ensure journald is configured to send logs to rsyslog ]=====================
+  # =====================[ SECTION 6.1.3.3: Ensure journald forwards to rsyslog ]=====================
   start_section "6.1.3.3"
-  LOGGING_SYSTEM="rsyslog"
-  if [ "$LOGGING_SYSTEM" = "rsyslog" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
-    run_command '
-a_settings=("ForwardToSyslog=yes")
-conf_file="/etc/systemd/journald.conf.d/60-journald.conf"
-
-mkdir -p /etc/systemd/journald.conf.d/
-
-if grep -q "^\s*
+  if [[ "$LOGGING_SYSTEM" == "rsyslog" || "$LOGGING_SYSTEM" == "all" ]]; then
+    CONF_FILE="/etc/systemd/journald.conf.d/60-journald.conf"
+    mkdir -p /etc/systemd/journald.conf.d/
+    run_command "bash -c '
+      SETTING=\"ForwardToSyslog=yes\"
+      if grep -q \"^
 
 \[Journal\]
 
-" "$conf_file" 2>/dev/null; then
-  for setting in "${a_settings[@]}"; do
-    grep -q "^$setting" "$conf_file" || echo "$setting" >> "$conf_file"
-  done
-else
-  {
-    echo "[Journal]"
-    for setting in "${a_settings[@]}"; do
-      echo "$setting"
-    done
-  } > "$conf_file"
-fi
-    ' "6.1.3.3 Set ForwardToSyslog=yes for rsyslog forwarding"
-    run_command "systemctl reload-or-restart systemd-journald" "6.1.3.3 Reload journald to apply ForwardToSyslog"
+\" \"$CONF_FILE\" 2>/dev/null; then
+        grep -q \"^\$SETTING\" \"$CONF_FILE\" || echo \"\$SETTING\" >> \"$CONF_FILE\"
+      else
+        echo -e \"[Journal]\\n\$SETTING\" > \"$CONF_FILE\"
+      fi
+    '" "6.1.3.3 Set ForwardToSyslog=yes for rsyslog forwarding"
+    run_command "systemctl reload-or-restart systemd-journald" "6.1.3.3 Reload journald"
   else
     echo "6.1.3.3 skipped: rsyslog is not the preferred logging system"
   fi
 
-  # =====================[ SECTION 6.1.3.4: Ensure rsyslog log file creation mode is configured ]=====================
+  # =====================[ SECTION 6.1.3.4: Ensure rsyslog file creation mode is configured ]=====================
   start_section "6.1.3.4"
-  LOGGING_SYSTEM="rsyslog"
-  if [ "$LOGGING_SYSTEM" = "rsyslog" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
-    run_command '
-mkdir -p /etc/rsyslog.d/
-echo "" >> /etc/rsyslog.d/60-rsyslog.conf
-echo "\$FileCreateMode 0640" >> /etc/rsyslog.d/60-rsyslog.conf
-    ' "6.1.3.4 Set rsyslog file creation mode to 0640"
-    run_command "systemctl reload-or-restart rsyslog" "6.1.3.4 Reload rsyslog to apply FileCreateMode"
+  if [[ "$LOGGING_SYSTEM" == "rsyslog" || "$LOGGING_SYSTEM" == "all" ]]; then
+    run_command "echo '\$FileCreateMode 0640' > /etc/rsyslog.d/60-rsyslog.conf" "6.1.3.4 Set rsyslog file creation mode"
+    run_command "systemctl reload-or-restart rsyslog" "6.1.3.4 Reload rsyslog"
   else
     echo "6.1.3.4 skipped: rsyslog is not the preferred logging system"
   fi
 
-  # =====================[ SECTION 6.1.3.5: Ensure rsyslog logging is configured ]=====================
+  # =====================[ SECTION 6.1.3.5: Apply rsyslog logging rules ]=====================
   start_section "6.1.3.5"
-  LOGGING_SYSTEM="rsyslog"
-  if [ "$LOGGING_SYSTEM" = "rsyslog" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
-    run_command '
-mkdir -p /etc/rsyslog.d/
-
-cat > /etc/rsyslog.d/60-rsyslog-logging.conf <<EOF
+  if [[ "$LOGGING_SYSTEM" == "rsyslog" || "$LOGGING_SYSTEM" == "all" ]]; then
+    run_command "install -m 0640 -o root -g root /dev/stdin /etc/rsyslog.d/60-rsyslog-logging.conf <<'EOF'
 # Emergency messages to all users
 *.emerg                         :omusrmsg:*
-
-# Authentication and authorization logs
 auth,authpriv.*                /var/log/secure
-
-# Mail subsystem logs
 mail.*                         -/var/log/mail
 mail.info                      -/var/log/mail.info
 mail.warning                   -/var/log/mail.warn
 mail.err                       /var/log/mail.err
-
-# Cron job activity
 cron.*                         /var/log/cron
-
-# Warnings and errors
 *.=warning;*.=err              -/var/log/warn
 *.crit                         /var/log/warn
-
-# General system messages excluding mail and news
 *.*;mail.none;news.none        -/var/log/messages
-
-# Kernel messages
 kern.*                         /var/log/kern.log
-
-# System daemon logs
 daemon.*                       /var/log/daemon.log
-
-# User-level messages
 user.*                         /var/log/user.log
-
-# Boot logs (often used by local7)
 local7.*                       /var/log/boot.log
-
-# Rsyslog internal messages
 syslog.*                       /var/log/syslog
-
-# Custom application logs using local facilities
 local0,local1.*                -/var/log/localmessages
 local2,local3.*                -/var/log/localmessages
 local4,local5.*                -/var/log/localmessages
 local6.*                       -/var/log/localmessages
-EOF
-    ' "6.1.3.5 Apply best-practice rsyslog logging rules"
-    run_command "systemctl reload-or-restart rsyslog" "6.1.3.5 Reload rsyslog to apply logging rules"
+EOF" "6.1.3.5 Apply rsyslog logging rules"
+    run_command "systemctl reload-or-restart rsyslog" "6.1.3.5 Reload rsyslog"
   else
     echo "6.1.3.5 skipped: rsyslog is not the preferred logging system"
   fi
 
-  # =====================[ SECTION 6.1.3.6: Ensure rsyslog is configured to send logs to a remote log host ]=====================
+  # =====================[ SECTION 6.1.3.6: Configure rsyslog remote forwarding ]=====================
   start_section "6.1.3.6"
-  LOGGING_SYSTEM="rsyslog"
-  REMOTE_LOG_HOST="loghost.example.com"  # Replace with your actual log host
-  if [ "$LOGGING_SYSTEM" = "rsyslog" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
-    run_command "
-mkdir -p /etc/rsyslog.d/
-
-cat > /etc/rsyslog.d/60-rsyslog-remote.conf <<EOF
+  REMOTE_LOG_HOST="loghost.example.com"
+  if [[ "$LOGGING_SYSTEM" == "rsyslog" || "$LOGGING_SYSTEM" == "all" ]]; then
+    run_command "install -m 0640 -o root -g root /dev/stdin /etc/rsyslog.d/60-rsyslog-remote.conf <<EOF
 *.* action(
   type=\"omfwd\"
   target=\"${REMOTE_LOG_HOST}\"
@@ -4018,51 +3898,33 @@ cat > /etc/rsyslog.d/60-rsyslog-remote.conf <<EOF
   queue.type=\"LinkedList\"
   queue.size=\"1000\"
 )
-EOF
-    " "6.1.3.6 Configure rsyslog to forward logs to remote host"
-    run_command "systemctl reload-or-restart rsyslog" "6.1.3.6 Reload rsyslog to apply remote forwarding"
+EOF" "6.1.3.6 Configure rsyslog to forward logs to remote host"
+    run_command "systemctl reload-or-restart rsyslog" "6.1.3.6 Reload rsyslog"
   else
     echo "6.1.3.6 skipped: rsyslog is not the preferred logging system"
   fi
 
-  # =====================[ SECTION 6.1.3.7: Ensure rsyslog is not configured to receive logs from remote clients ]=====================
+  # =====================[ SECTION 6.1.3.7: Disable rsyslog remote receive ]=====================
   start_section "6.1.3.7"
-
-  LOGGING_SYSTEM="rsyslog"
-
-  if [ "$LOGGING_SYSTEM" = "rsyslog" ] || [ "$LOGGING_SYSTEM" = "all" ]; then
-    run_command '
-# Directives to remove
-patterns=(
-  "module(load=\"imtcp\")"
-  "input(type=\"imtcp\" port=\"514\")"
-  "\$ModLoad imtcp"
-  "\$InputTCPServerRun"
-)
-
-# Target config files
-config_files=$(grep -rlE "${patterns[*]}" /etc/rsyslog.conf /etc/rsyslog.d/ 2>/dev/null)
-
-# Remove matching lines
-for file in $config_files; do
-  for pattern in "${patterns[@]}"; do
-    sed -i "/$pattern/d" "$file"
-  done
-done
-    ' "6.1.3.7 Remove rsyslog remote receive directives"
-
-    run_command "systemctl reload-or-restart rsyslog" "6.1.3.7 Reload rsyslog after removing remote receive config"
+  if [[ "$LOGGING_SYSTEM" == "rsyslog" || "$LOGGING_SYSTEM" == "all" ]]; then
+    run_command "bash -c '
+      patterns=(\"module(load=\\\"imtcp\\\")\" \"input(type=\\\"imtcp\\\" port=\\\"514\\\")\" \"\\\$ModLoad imtcp\" \"\\\$InputTCPServerRun\")
+      for pattern in \"\${patterns[@]}\"; do
+        grep -rl \"\$pattern\" /etc/rsyslog.conf /etc/rsyslog.d/ 2>/dev/null | while read -r file; do
+          sed -i \"/\$pattern/d\" \"\$file\"
+        done
+      done
+    '" "6.1.3.7 Remove rsyslog remote receive directives"
+    run_command "systemctl reload-or-restart rsyslog" "6.1.3.7 Reload rsyslog"
   else
     echo "6.1.3.7 skipped: rsyslog is not the preferred logging system"
   fi
 
+
   # =====================[ SECTION 6.1.3.8: Ensure logrotate is configured ]=====================
   start_section "6.1.3.8"
 
-  run_command '
-mkdir -p /etc/logrotate.d/
-
-cat > /etc/logrotate.d/rsyslog <<EOF
+  run_command "install -m 0644 -o root -g root /dev/stdin /etc/logrotate.d/rsyslog <<'EOF'
 /var/log/syslog
 /var/log/messages
 /var/log/secure
@@ -4088,84 +3950,86 @@ cat > /etc/logrotate.d/rsyslog <<EOF
     endscript
 }
 EOF
-  ' "6.1.3.8 Configure logrotate for rsyslog logs"
+  " "6.1.3.8 Configure logrotate for rsyslog logs"
+
 fi
 
+
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.4" || "$TARGET_SECTION" == 6.1 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.4" || "$TARGET_SECTION" == "6.1" ]]; then
 
   # =====================[ SECTION 6.1.4.1: Ensure access to all logfiles has been configured ]=====================
   start_section "6.1.4.1"
 
-  run_command '
-log_paths=("/var/log" "/var/lib" "/var/audit")
+  run_command "bash -c '
+log_paths=(\"/var/log\" \"/var/lib\" \"/var/audit\")
 a_output2=()
 
 f_file_test_fix() {
   a_out2=()
-  maxperm="$(printf "%o" $((0777 & ~$perm_mask)))"
+  maxperm=\"\$(printf \"%o\" \$((0777 & ~\$perm_mask)))\"
 
-  if [ $((l_mode & perm_mask)) -gt 0 ]; then
-    a_out2+=(" o Mode: \"$l_mode\" should be \"$maxperm\" or more restrictive" " x Removing excess permissions")
-    chmod "$l_rperms" "$l_fname"
+  if [ \$((l_mode & perm_mask)) -gt 0 ]; then
+    a_out2+=(\" o Mode: \\\"\$l_mode\\\" should be \\\"\$maxperm\\\" or more restrictive\" \" x Removing excess permissions\")
+    chmod \"\$l_rperms\" \"\$l_fname\"
   fi
 
-  if [[ ! "$l_user" =~ $l_auser ]]; then
-    a_out2+=(" o Owned by: \"$l_user\" and should be owned by \"${l_auser//|/ or }\"" " x Changing ownership to: \"$l_fix_account\"")
-    chown "$l_fix_account" "$l_fname"
+  if [[ ! \"\$l_user\" =~ \$l_auser ]]; then
+    a_out2+=(\" o Owned by: \\\"\$l_user\\\" and should be owned by \\\"\${l_auser//|/ or }\\\"\" \" x Changing ownership to: \\\"\$l_fix_account\\\"\")
+    chown \"\$l_fix_account\" \"\$l_fname\"
   fi
 
-  if [[ ! "$l_group" =~ $l_agroup ]]; then
-    a_out2+=(" o Group owned by: \"$l_group\" and should be group owned by \"${l_agroup//|/ or }\"" " x Changing group ownership to: \"$l_fix_account\"")
-    chgrp "$l_fix_account" "$l_fname"
+  if [[ ! \"\$l_group\" =~ \$l_agroup ]]; then
+    a_out2+=(\" o Group owned by: \\\"\$l_group\\\" and should be group owned by \\\"\${l_agroup//|/ or }\\\"\" \" x Changing group ownership to: \\\"\$l_fix_account\\\"\")
+    chgrp \"\$l_fix_account\" \"\$l_fname\"
   fi
 
-  [ "${#a_out2[@]}" -gt 0 ] && a_output2+=(" - File: \"$l_fname\" is:" "${a_out2[@]}")
+  [ \"\${#a_out2[@]}\" -gt 0 ] && a_output2+=(\" - File: \\\"\$l_fname\\\" is:\" \"\${a_out2[@]}\")
 }
 
-l_fix_account="root"
+l_fix_account=\"root\"
 
-for path in "${log_paths[@]}"; do
-  while IFS= read -r -d $'\0' l_file; do
+for path in \"\${log_paths[@]}\"; do
+  while IFS= read -r -d \$'\0' l_file; do
     while IFS=: read -r l_fname l_mode l_user l_group; do
-      case "$(basename "$l_fname")" in
+      case \"\$(basename \"\$l_fname\")\" in
         lastlog* | wtmp* | btmp* | README)
-          perm_mask="0113" l_rperms="ug-x,o-wx" l_auser="root" l_agroup="(root|utmp)"
+          perm_mask=0113 l_rperms=\"ug-x,o-wx\" l_auser=\"root\" l_agroup=\"(root|utmp)\"
           f_file_test_fix ;;
         cloud-init.log* | localmessages* | waagent.log*)
-          perm_mask="0133" l_rperms="u-x,go-wx" l_auser="(root|syslog)" l_agroup="(root|adm)"
+          perm_mask=0133 l_rperms=\"u-x,go-wx\" l_auser=\"(root|syslog)\" l_agroup=\"(root|adm)\"
           f_file_test_fix ;;
         secure | auth.log | syslog | messages)
-          perm_mask="0137" l_rperms="u-x,g-wx,o-rwx" l_auser="(root|syslog)" l_agroup="(root|adm)"
+          perm_mask=0137 l_rperms=\"u-x,g-wx,o-rwx\" l_auser=\"(root|syslog)\" l_agroup=\"(root|adm)\"
           f_file_test_fix ;;
         SSSD | sssd)
-          perm_mask="0117" l_rperms="ug-x,o-rwx" l_auser="(root|SSSD)" l_agroup="(root|SSSD)"
+          perm_mask=0117 l_rperms=\"ug-x,o-rwx\" l_auser=\"(root|SSSD)\" l_agroup=\"(root|SSSD)\"
           f_file_test_fix ;;
         gdm | gdm3)
-          perm_mask="0117" l_rperms="ug-x,o-rwx" l_auser="root" l_agroup="(root|gdm|gdm3)"
+          perm_mask=0117 l_rperms=\"ug-x,o-rwx\" l_auser=\"root\" l_agroup=\"(root|gdm|gdm3)\"
           f_file_test_fix ;;
         *.journal | *.journal~)
-          perm_mask="0137" l_rperms="u-x,g-wx,o-rwx" l_auser="root" l_agroup="(root|systemd-journal)"
+          perm_mask=0137 l_rperms=\"u-x,g-wx,o-rwx\" l_auser=\"root\" l_agroup=\"(root|systemd-journal)\"
           f_file_test_fix ;;
         *)
-          perm_mask="0137" l_rperms="u-x,g-wx,o-rwx" l_auser="(root|syslog)" l_agroup="(root|adm)"
-          user_shell="$(awk -F: -v u=\"$l_user\" '\''$1==u {print $7}'\'' /etc/passwd)"
-          if [ "$l_user" = "root" ] || ! grep -Pq -- "^\s*${user_shell}\b" /etc/shells; then
-            ! grep -Pq -- "$l_auser" <<< "$l_user" && l_auser="(root|syslog|$l_user)"
-            ! grep -Pq -- "$l_agroup" <<< "$l_group" && l_agroup="(root|adm|$l_group)"
+          perm_mask=0137 l_rperms=\"u-x,g-wx,o-rwx\" l_auser=\"(root|syslog)\" l_agroup=\"(root|adm)\"
+          user_shell=\"\$(getent passwd \"\$l_user\" | cut -d: -f7)\"
+          if [ \"\$l_user\" = \"root\" ] || ! grep -Pq -- \"^\\s*\${user_shell}\\b\" /etc/shells; then
+            ! grep -Pq -- \"\$l_auser\" <<< \"\$l_user\" && l_auser=\"(root|syslog|\$l_user)\"
+            ! grep -Pq -- \"\$l_agroup\" <<< \"\$l_group\" && l_agroup=\"(root|adm|\$l_group)\"
           fi
           f_file_test_fix ;;
       esac
-    done < <(stat -Lc "%n:%#a:%U:%G" "$l_file")
-  done < <(find -L "$path" -type f \( -perm /0137 -o ! -user root -o ! -group root \) -print0)
+    done < <(stat -Lc \"%n:%#a:%U:%G\" \"\$l_file\")
+  done < <(find -L \"\$path\" -type f \\( -perm /0137 -o ! -user root -o ! -group root \\) -print0)
 done
 
-if [ "${#a_output2[@]}" -le 0 ]; then
-  printf "\n%s\n" "- All files in log paths have appropriate permissions and ownership" " o No changes required"
+if [ \"\${#a_output2[@]}\" -le 0 ]; then
+  printf \"\\n%s\\n\" \"- All files in log paths have appropriate permissions and ownership\" \" o No changes required\"
 else
-  printf "\n%s\n" "${a_output2[@]}"
+  printf \"\\n%s\\n\" \"\${a_output2[@]}\"
 fi
-  ' "6.1.4.1 Audit and fix log file permissions"
+  '" "6.1.4.1 Audit and fix log file permissions"
 
 fi
 
