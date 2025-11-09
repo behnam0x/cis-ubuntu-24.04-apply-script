@@ -390,8 +390,8 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.4" ]]; then
   start_section "1.4.1"
 
   # === Replace these values with your actual username and encrypted password ===
-  GRUB_USER="adminuser"
-  GRUB_PASSWORD_HASH="grub.pbkdf2.sha512.600000.C6179215DBE8C9F03B3A91B42F33F6626CAD6F5E0FB40AFB4E55FA075D96B3B3DB8FC1C7DC78319"
+  GRUB_USER="root"
+  GRUB_PASSWORD_HASH="grub.pbkdf2.sha512.10000.E33CC4ACA0E07E0EA92B3B6318FA12CCDD77B09F7BCD9B5419950E27CF59A10F73DCB30837E4BB0EF9CA4BE2F8B411EE5CFF7F3AE771BDA7DB3FAD60FC18D278.C0C5DDF6307A1CB40FA4A8FE8CDB949F9F630CC281E12DA46EEE1C03A4B4A9AD0BE9329599C454FB3CE02E35FA407AB7084067306012738F235B0139D1815AB1"
   CUSTOM_GRUB_FILE="/etc/grub.d/01_password"
 
   run_command "
@@ -4034,7 +4034,7 @@ fi
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" || "$TARGET_SECTION" == 6.2 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" || "$TARGET_SECTION" == "6.2" ]]; then
 
   # =====================[ SECTION 6.2.1.1: Ensure auditd packages are installed ]=====================
   start_section "6.2.1.1"
@@ -4044,34 +4044,47 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" || "$TARGET_SECTION" 
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  # Resolve script directory and offline package path
+  # Set default offline package directory if not defined
+  DEB_DIR="${DEB_DIR:-/opt/offline-packages}"
 
+  # Check if auditd and audispd-plugins are fully installed
+  auditd_ok=$(dpkg-query -W -f='${Status}' auditd 2>/dev/null | grep -q "install ok installed" && echo yes || echo no)
+  audispd_ok=$(dpkg-query -W -f='${Status}' audispd-plugins 2>/dev/null | grep -q "install ok installed" && echo yes || echo no)
 
-  # Check if auditd is already installed
-  if dpkg -s auditd >/dev/null 2>&1; then
-    log_message "6.2.1.1 [✓] auditd is already installed"
+  if [[ "$auditd_ok" == "yes" && "$audispd_ok" == "yes" ]]; then
+    log_message "6.2.1.1 [✓] auditd and audispd-plugins are fully installed"
   else
     if is_online; then
       run_command "apt install -y auditd audispd-plugins" "6.2.1.1 Install auditd and audispd-plugins"
     else
-      log_message "6.2.1.1 System appears to be offline — attempting offline auditd install"
+      log_message "6.2.1.1 System appears to be offline — attempting offline install"
 
       if [ -d "$DEB_DIR" ]; then
+        # Install packages together to avoid dependency issues
+        pkg_files=()
         for pkg in auditd audispd-plugins; do
           file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
           if [[ -n "$file" ]]; then
-            dpkg -i "$file"
-            log_success "6.2.1.1 Installed $pkg from offline package"
+            pkg_files+=("$file")
           else
             log_error "6.2.1.1 Missing offline package for $pkg"
           fi
         done
-        apt-get install -f -y
+
+        if [[ ${#pkg_files[@]} -gt 0 ]]; then
+          dpkg -i "${pkg_files[@]}" || log_error "6.2.1.1 dpkg install failed"
+          apt-get install -f -y || log_error "6.2.1.1 apt fix failed"
+        else
+          log_error "6.2.1.1 No packages found for offline install"
+        fi
       else
         log_error "6.2.1.1 Offline package directory not found: $DEB_DIR"
       fi
     fi
   fi
+
+
+
 
 
     # =====================[ SECTION 6.2.1.2: Ensure auditd service is enabled and active ]=====================
@@ -4115,7 +4128,7 @@ fi
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.2" || "$TARGET_SECTION" == 6.2 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.2" || "$TARGET_SECTION" == "6.2" ]]; then
 
   # =====================[ SECTION 6.2.2.1: Ensure audit log storage size is configured ]=====================
   start_section "6.2.2.1"
@@ -4182,7 +4195,7 @@ fi
 
 fi
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.3" || "$TARGET_SECTION" == 6.2 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.3" || "$TARGET_SECTION" == "6.2" ]]; then
 
   # =====================[ SECTION 6.2.3.1: Ensure sudoers changes are audited ]=====================
   start_section "6.2.3.1"
@@ -4837,7 +4850,7 @@ done
 fi
 
 ########################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.4" || "$TARGET_SECTION" == 6.2 ]]; then
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.4" || "$TARGET_SECTION" == "6.2" ]]; then
 
   # =====================[ SECTION 6.2.4.1: Ensure audit log file permissions are restricted ]=====================
   start_section "6.2.4.1"
