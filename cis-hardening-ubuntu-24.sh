@@ -548,8 +548,8 @@ All data and actions are logged. Violations will be investigated and prosecuted.
 EOF
   )
 
-  run_command "echo \"$BANNER\" > /etc/issue" "1.6.2 Set /etc/issue banner (local login)"
-  run_command "echo \"$BANNER\" > /etc/issue.net" "1.6.3 Set /etc/issue.net banner (remote login)"
+  run_command "printf '%s\n' \"$BANNER\" > /etc/issue" "1.6.2 Set /etc/issue banner (local login)"
+  run_command "printf '%s\n' \"$BANNER\" > /etc/issue.net" "1.6.3 Set /etc/issue.net banner (remote login)"
   run_command "sed -i '/^Banner /d' /etc/ssh/sshd_config && echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config" "1.6.x Configure SSH banner directive"
 
   # =====================[ 1.6.1: Create Custom MOTD Script ]=====================
@@ -568,8 +568,9 @@ FG_RED='\033[38;5;196m'
 
 # System info
 HOSTNAME=$(hostname)
-USER=$(whoami)
-LAST_LOGIN=$(last -i "$USER" | grep -m 1 "$USER" | awk '{print $1, "from", $3, "at", $5, $6, $7}')
+USER=$(who | awk 'NR==1 {print $1}')
+LAST_LOGIN=$(last -i | awk 'NR==2 {if ($4 == "**Never") print "No previous login found"; else print $1, "from", $3, "at", $4, $5, $6, $7}')
+LAST_LOGIN=${LAST_LOGIN:-"Login history unavailable"}
 MEMORY=$(free -h | awk '/Mem:/ {print $3 "/" $2}')
 DISK=$(df -h / | awk 'NR==2 {print $3 "/" $2 " used"}')
 UPTIME=$(uptime -p)
@@ -616,8 +617,8 @@ EOF
   
   run_command "sed -i '/pam_motd.so/d' /etc/pam.d/sshd && echo 'session optional pam_motd.so motd=/run/motd.dynamic' >> /etc/pam.d/sshd" "1.6.x Configure PAM to show dynamic MOTD"
   run_command "sed -i '/pam_motd.so/d' /etc/pam.d/login && echo 'session optional pam_motd.so motd=/run/motd.dynamic' >> /etc/pam.d/login" "1.6.x Ensure PAM login MOTD is enabled"
-
 fi
+
 
 #################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.7" ]]; then
@@ -5408,67 +5409,68 @@ fi
 ########################################################################################
 #############################[ OUR POLICY OPTIONAL ]####################################
 ########################################################################################
+########################################################################################
+########################################################################################
+########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.1" || "$TARGET_SECTION" == "8" ]]; then
 
   # =====================[ SECTION 8.1: Create and Configure Custom User Management Script ]=====================
   start_section "8.1"
 
   # Step 1: Create script directory
-  if [ ! -d /usr/sbin/script ]; then
-    run_command "mkdir -p /usr/sbin/script" "8.1.1 Create /usr/sbin/script directory"
-  fi
+  run_command "mkdir -p /usr/sbin/script" "8.1.1 Create /usr/sbin/script directory"
 
   # Step 2: Set directory permissions
   run_command "chmod o+rx /usr/sbin/script" "8.1.2 Set execute permission for others on /usr/sbin/script"
 
-  # Step 3: Create or overwrite useradd script
-  cat << 'EOF' > /usr/sbin/script/useradd
+  # Step 3: Overwrite useradd script
+  run_command "bash -c 'cat > /usr/sbin/script/useradd << \"EOF\"
 #!/bin/bash
 
-echo "Enter username:"
+echo \"Enter username:\"
 read Username
 
 # Validate input
-if [[ -z "$Username" ]]; then
-  echo "❌ Error: Username cannot be empty."
+if [[ -z \"\$Username\" ]]; then
+  echo \"❌ Error: Username cannot be empty.\"
   exit 1
 fi
 
 # Check if user already exists
-if id "$Username" &>/dev/null; then
-  echo "❌ Error: User '$Username' already exists."
+if id \"\$Username\" &>/dev/null; then
+  echo \"❌ Error: User '\$Username' already exists.\"
   exit 1
 fi
 
-# Create user and set default password
-if /usr/sbin/useradd "$Username"; then
-  echo "$Username:$(openssl passwd -6 123456)" | chpasswd -e 2>/dev/null
-  echo "✅ User '$Username' created with password '123456'."
-  echo "🔒 They will be required to change it at first login."
-  chage -d 0 "$Username"
+# Create user with home directory, admin and sugroup groups, and bash shell
+if /usr/sbin/useradd -m -G admin,sugroup -s /bin/bash \"\$Username\"; then
+  echo \"\$Username:\$(openssl passwd -6 A1d2m3@456)\" | chpasswd -e 2>/dev/null
+  echo \"✅ User '\$Username' created with password 'A1d2m3@456'.\"
+  echo \"🔒 They will be required to change it at first login.\"
+  chage -d 0 \"\$Username\"
 else
-  echo "❌ Error: Failed to create user '$Username'."
+  echo \"❌ Error: Failed to create user '\$Username'.\"
   exit 1
 fi
 EOF
+'" "8.1.3 Create or overwrite useradd script"
 
-  run_command "chmod +x /usr/sbin/script/useradd" "8.1.3 Make useradd script executable"
+  # Step 4: Make script executable
+  run_command "chmod +x /usr/sbin/script/useradd" "8.1.4 Make useradd script executable"
 
-  # Step 4: Match permissions with system useradd
-  run_command "chmod --reference=/usr/sbin/useradd /usr/sbin/script/useradd" "8.1.4 Match permissions with system useradd"
+  # Step 5: Match permissions with system useradd
+  run_command "chmod --reference=/usr/sbin/useradd /usr/sbin/script/useradd" "8.1.5 Match permissions with system useradd"
 
-  # Step 5: Create adduser alias
-  if [ ! -f /usr/sbin/script/adduser ]; then
-    run_command "cp /usr/sbin/script/useradd /usr/sbin/script/adduser" "8.1.5 Create adduser alias"
-  fi
+  # Step 6: Create adduser alias
+  run_command "cp -f /usr/sbin/script/useradd /usr/sbin/script/adduser" "8.1.6 Create or overwrite adduser alias"
 
-  # Step 6: Update secure_path in sudoers
+  # Step 7: Update secure_path in sudoers
   if ! grep -q '/usr/sbin/script' /etc/sudoers; then
     echo 'Defaults        secure_path="/usr/sbin/script:/sbin:/bin:/usr/sbin:/usr/bin"' >> /etc/sudoers
-    run_command "echo 'Defaults secure_path updated'" "8.1.6 Update secure_path in sudoers"
+    run_command "echo 'Defaults secure_path updated'" "8.1.7 Update secure_path in sudoers"
   fi
 
-  # Step 7: Update /etc/profile for root PATH
+  # Step 8: Update /etc/profile for root PATH
   if ! grep -q 'pathmunge /usr/sbin/script' /etc/profile; then
     cat << 'EOF' >> /etc/profile
 
@@ -5478,11 +5480,10 @@ if [ "$EUID" = "0" ]; then
     pathmunge /usr/local/sbin
 fi
 EOF
-    run_command "source /etc/profile" "8.1.7 Reload profile to apply PATH changes"
+    run_command "source /etc/profile" "8.1.8 Reload profile to apply PATH changes"
   fi
 
 fi
-
 
 
 
