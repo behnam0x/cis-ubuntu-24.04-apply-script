@@ -1338,7 +1338,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
   run_command "sysctl -w net.ipv4.route.flush=1" "3.3.4 Flush IPv4 routing table"
 
 
-
   # =====================[ SECTION 3.3.5: Disable ICMP Redirect Acceptance ]=====================
   start_section "3.3.5"
 
@@ -1424,8 +1423,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
   fi
 
 
-
-
   # =====================[ SECTION 3.3.6: Disable Secure ICMP Redirects ]=====================
   start_section "3.3.6"
 
@@ -1470,7 +1467,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
   fi
 
 
-
   # =====================[ SECTION 3.3.7: Enable Reverse Path Filtering ]=====================
   start_section "3.3.7"
 
@@ -1513,7 +1509,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "3.3" ]]; then
     # Prevent UFW from overriding system-wide sysctl
     run_command "sed -i 's/^IPT_SYSCTL=.*/IPT_SYSCTL=0/' /etc/default/ufw" "3.3.7 Set IPT_SYSCTL=0 to respect system-wide sysctl"
   fi
-
 
 
   # =====================[ SECTION 3.3.8: Disable Source Routed Packet Acceptance ]=====================
@@ -2722,7 +2717,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.1" || "$TARGET_SECTION" 
   fi
 
 
-
   # =====================[ SECTION 5.3.1.3: Ensure libpam-pwquality is installed ]=====================
   start_section "5.3.1.3"
 
@@ -3336,10 +3330,6 @@ fi
 
 
 
-
-
-
-
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   # =====================[ SECTION 5.4.1.1: Ensure password expiration is configured ]=====================
@@ -3523,7 +3513,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   # Ensure correct permissions
   run_command "chmod 644 /etc/profile.d/timeout.sh" "5.4.3.2 Set permissions on timeout.sh"
   run_command "chown root:root /etc/profile.d/timeout.sh" "5.4.3.2 Set ownership on timeout.sh"
-
 
 
   # =====================[ SECTION 5.4.3.3: Ensure default user umask is configured ]=====================
@@ -5484,8 +5473,6 @@ EOF
   fi
 
 fi
-
-
 
 
 
