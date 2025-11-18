@@ -5619,22 +5619,25 @@ fi
 
 # =====================[ SECTION 8.6: Harden Shell History Behavior ]=====================
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.6" || "$TARGET_SECTION" == "8" ]]; then
-
   start_section "8.6"
 
-  # Step 1: Set history size limits system-wide
-  run_command "grep -q '^export HISTSIZE=' /etc/bash.bashrc && sed -i 's/^export HISTSIZE=.*/export HISTSIZE=5000/' /etc/bash.bashrc || echo 'export HISTSIZE=5000' >> /etc/bash.bashrc" \
-  "8.6.1 Set HISTSIZE to 5000 in /etc/bash.bashrc"
+  # Step 1–3: Apply history settings to all relevant files
+  for FILE in /etc/bash.bashrc /etc/profile /etc/bash-global-history; do
+    [[ -f "$FILE" ]] || continue
 
-  run_command "grep -q '^export HISTFILESIZE=' /etc/bash.bashrc && sed -i 's/^export HISTFILESIZE=.*/export HISTFILESIZE=2000/' /etc/bash.bashrc || echo 'export HISTFILESIZE=2000' >> /etc/bash.bashrc" \
-  "8.6.2 Set HISTFILESIZE to 2000 in /etc/bash.bashrc"
+    run_command "grep -q '^export HISTSIZE=' \"$FILE\" && sed -i 's/^export HISTSIZE=.*/export HISTSIZE=5000/' \"$FILE\" || echo 'export HISTSIZE=5000' >> \"$FILE\"" \
+    "8.6.1 Set HISTSIZE in $FILE"
 
-  # Step 2: Enable timestamping of history entries
-  run_command "grep -q '^export HISTTIMEFORMAT=' /etc/bash.bashrc && sed -i 's|^export HISTTIMEFORMAT=.*|export HISTTIMEFORMAT=\"%F %T \"|' /etc/bash.bashrc || echo 'export HISTTIMEFORMAT=\"%F %T \"' >> /etc/bash.bashrc" \
-  "8.6.3 Enable HISTTIMEFORMAT for timestamped history"
+    run_command "grep -q '^export HISTFILESIZE=' \"$FILE\" && sed -i 's/^export HISTFILESIZE=.*/export HISTFILESIZE=2000/' \"$FILE\" || echo 'export HISTFILESIZE=2000' >> \"$FILE\"" \
+    "8.6.2 Set HISTFILESIZE in $FILE"
 
-  # Step 3: Prevent disabling history with 'set +o history'
-  run_command "grep -q \"You Can't Execute Disable History Command!!\" /etc/bash.bashrc || (cat > /tmp/set_override.sh << 'EOF'
+    run_command "grep -q '^export HISTTIMEFORMAT=' \"$FILE\" && sed -i 's|^export HISTTIMEFORMAT=.*|export HISTTIMEFORMAT=\"%F %T \"|' \"$FILE\" || echo 'export HISTTIMEFORMAT=\"%F %T \"' >> \"$FILE\"" \
+    "8.6.3 Enable HISTTIMEFORMAT in $FILE"
+  done
+
+  # Step 4: Prevent disabling history with 'set +o history'
+  run_command "grep -q \"You Can't Execute Disable History Command!!\" /etc/bash.bashrc || (
+    cat << 'EOF' >> /etc/bash.bashrc
 set() {
   temp=\$(echo \"\$@\" | tr -d \" \" | grep \"+ohistory\")
   if [ \"\$temp\" != \"\" ]; then
@@ -5644,24 +5647,52 @@ set() {
   builtin set \"\$@\"
 }
 EOF
-cat /tmp/set_override.sh >> /etc/bash.bashrc && rm /tmp/set_override.sh)" \
-"8.6.4 Override 'set' to block disabling history"
+  )" \
+  "8.6.4 Override 'set' to block disabling history"
 
+  # Step 5: Add append-only .bash_history logic to /usr/local/sbin/adduser.local
+  ADDUSER_LOCAL="/usr/local/sbin/adduser.local"
+  APPEND_BLOCK_START="# >>> Harden .bash_history append-only"
 
-  # Step 4: Also apply settings to /etc/bash-global-history if it exists
-  if [[ -f /etc/bash-global-history ]]; then
-    run_command "grep -q '^export HISTSIZE=' /etc/bash-global-history && sed -i 's/^export HISTSIZE=.*/export HISTSIZE=5000/' /etc/bash-global-history || echo 'export HISTSIZE=5000' >> /etc/bash-global-history" \
-    "8.6.5 Set HISTSIZE in /etc/bash-global-history"
+  if grep -qF "$APPEND_BLOCK_START" "$ADDUSER_LOCAL" 2>/dev/null; then
+    log_message "8.6.8 Append-only .bash_history logic already present in $ADDUSER_LOCAL"
+  else
+    run_command "mkdir -p \$(dirname \"$ADDUSER_LOCAL\") && cat << 'EOF' | tee -a \"$ADDUSER_LOCAL\" > /dev/null
+# >>> Harden .bash_history append-only
+#!/bin/bash
+USER_HOME=\"/home/\$1\"
+HIST=\"\$USER_HOME/.bash_history\"
 
-    run_command "grep -q '^export HISTFILESIZE=' /etc/bash-global-history && sed -i 's/^export HISTFILESIZE=.*/export HISTFILESIZE=2000/' /etc/bash-global-history || echo 'export HISTFILESIZE=2000' >> /etc/bash-global-history" \
-    "8.6.6 Set HISTFILESIZE in /etc/bash-global-history"
+if [ ! -f \"\$HIST\" ]; then
+  touch \"\$HIST\"
+fi
 
-    run_command "grep -q '^export HISTTIMEFORMAT=' /etc/bash-global-history && sed -i 's|^export HISTTIMEFORMAT=.*|export HISTTIMEFORMAT=\"%F %T \"|' /etc/bash-global-history || echo 'export HISTTIMEFORMAT=\"%F %T \"' >> /etc/bash-global-history" \
-    "8.6.7 Set HISTTIMEFORMAT in /etc/bash-global-history"
+chattr +a \"\$HIST\" 2>/dev/null || true
+chown \$1:\$1 \"\$HIST\"
+# <<< Harden .bash_history append-only
+EOF" \
+    "8.6.8 Add append-only .bash_history logic to $ADDUSER_LOCAL"
   fi
+
+  run_command "chmod +x $ADDUSER_LOCAL" \
+  "8.6.9 Make $ADDUSER_LOCAL executable"
 fi
 
 
+# =====================[ SECTION 8.7: Schedule Weekly AIDE Integrity Check ]=====================
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.7" || "$TARGET_SECTION" == "8" ]]; then
+  start_section "8.7"
+
+  CRON_JOB="0 0 * * 6 /usr/sbin/aide --upgrade >> /var/log/aide/aide.check"
+  CRON_FILE="/etc/crontab"
+
+  if grep -qF "$CRON_JOB" "$CRON_FILE"; then
+    log_message "8.7 AIDE weekly check already scheduled in $CRON_FILE"
+  else
+    run_command "echo \"$CRON_JOB\" >> \"$CRON_FILE\"" \
+    "8.7 Add AIDE weekly integrity check to $CRON_FILE"
+  fi
+fi
 
 
 
@@ -5708,4 +5739,5 @@ echo "    └── Details log: $LOG_DIR/details.log"
 
 echo ""
 echo -e "\e[36m🛡️ Stay secure. Stay compliant.\e[0m"
+
 
