@@ -5405,6 +5405,26 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.1" || "$TARGET_SECTION" ==
 
   # =====================[ SECTION 8.1: Create and Configure Custom User Management Script ]=====================
   start_section "8.1"
+  
+  #create admin user
+  # Step 0: Ensure admin group exists with GID 1001
+  run_command "getent group admin || echo 'admin:x:1001:' >> /etc/group" "8.1.0 Ensure 'admin' group exists with GID 1001"
+
+  # Step 1: Add admin user directly to /etc/passwd
+  run_command "getent passwd admin || echo 'admin:x:1001:1001:Admin User:/home/admin:/bin/bash' >> /etc/passwd" \
+  "8.1.1 Add 'admin' entry to /etc/passwd"
+
+  # Step 2: Add password hash directly to /etc/shadow
+  run_command "grep -q '^admin:' /etc/shadow || echo \"admin:$(openssl passwd -6 A1d2m3@456):19345:0:99999:7:::\" >> /etc/shadow" \
+  "8.1.2 Add password hash for 'admin' to /etc/shadow"
+
+
+  # Step 3: Create home directory manually
+  run_command "mkdir -p /home/admin && chown 1001:1001 /home/admin && chmod 700 /home/admin" \
+  "8.1.3 Create and secure /home/admin directory"
+
+
+
 
   # Step 1: Create script directory
   run_command "mkdir -p /usr/sbin/script" "8.1.1 Create /usr/sbin/script directory"
@@ -5431,8 +5451,8 @@ if id \"\$Username\" &>/dev/null; then
   exit 1
 fi
 
-# Create user with home directory, admin and sugroup groups, and bash shell
-if /usr/sbin/useradd -m -G admin,sugroup -s /bin/bash \"\$Username\"; then
+# Create user with home directory, admin  groups, and bash shell
+if /usr/sbin/useradd -m -G admin -s /bin/bash \"\$Username\"; then
   echo \"\$Username:\$(openssl passwd -6 A1d2m3@456)\" | chpasswd -e 2>/dev/null
   echo \"✅ User '\$Username' created with password 'A1d2m3@456'.\"
   echo \"🔒 They will be required to change it at first login.\"
@@ -5473,6 +5493,174 @@ EOF
   fi
 
 fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.2" || "$TARGET_SECTION" == "8" ]]; then
+
+  # =====================[ SECTION 8.2: Ensure dump/pass values in /etc/fstab ]=====================
+  start_section "8.2"
+
+  update_fstab_entry() {
+    local mount="$1"
+    local dump="$2"
+    local pass="$3"
+
+    if grep -qE "[[:space:]]${mount}[[:space:]]" /etc/fstab; then
+      run_command "awk -v mp=\"$mount\" -v d=\"$dump\" -v p=\"$pass\" '
+      \$2 == mp {
+        \$5 = d;
+        \$6 = p;
+      }
+      { print }' /etc/fstab > /etc/fstab.tmp && mv /etc/fstab.tmp /etc/fstab" \
+      "8.2 Set dump=$dump pass=$pass for $mount"
+    else
+      log_message "8.2 $mount not found in /etc/fstab — skipping dump/pass update"
+    fi
+  }
+
+  update_fstab_entry "/"       "0" "1"
+  update_fstab_entry "/swap"   "0" "0"
+  update_fstab_entry "/boot"   "0" "2"
+  update_fstab_entry "/var"    "0" "2"
+  update_fstab_entry "/home"   "0" "2"
+  update_fstab_entry "/tmp"    "0" "2"
+  update_fstab_entry "/usr"    "0" "2"
+
+fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.3" || "$TARGET_SECTION" == "8" ]]; then
+
+  # =====================[ SECTION 8.3: Disable IPv6 via GRUB ]=====================
+  start_section "8.3"
+
+  GRUB_FILE="/etc/default/grub"
+  IPV6_FLAG="ipv6.disable=1"
+
+  if grep -q "^GRUB_CMDLINE_LINUX=" "$GRUB_FILE"; then
+    if grep -q "$IPV6_FLAG" "$GRUB_FILE"; then
+      log_message "8.3 GRUB already contains $IPV6_FLAG — no changes needed"
+    else
+      run_command "sed -i '/^GRUB_CMDLINE_LINUX=/ s/\"\$/ $IPV6_FLAG\"/' $GRUB_FILE" "8.3 Append $IPV6_FLAG to GRUB_CMDLINE_LINUX"
+      run_command "update-grub" "8.3 Update GRUB configuration"
+    fi
+  else
+    log_error "8.3 GRUB_CMDLINE_LINUX not found in $GRUB_FILE — manual review required"
+  fi
+
+fi
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.4" || "$TARGET_SECTION" == "8" ]]; then
+
+  # =====================[ SECTION 8.4: Allow Specific UFW Ports ]=====================
+  start_section "8.4"
+
+  # Allow DNS over TCP (port 53)
+  run_command "ufw allow 53/tcp" "8.4 Allow DNS over TCP"
+
+  # Allow custom application on TCP port 5050
+  run_command "ufw allow 5050/tcp" "8.4 Allow custom app on TCP 5050"
+
+  # Allow syslog over both TCP and UDP port 514
+  run_command "ufw allow 514/tcp" "8.4 Allow syslog over TCP 514"
+  run_command "ufw allow 514/udp" "8.4 Allow syslog over UDP 514"
+
+fi
+
+########################################################################################
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.5" || "$TARGET_SECTION" == "8" ]]; then
+
+  # =====================[ SECTION 8.5: Harden sudoers with restricted command aliases ]=====================
+  start_section "8.5"
+
+  SUDOERS_FILE="/etc/sudoers"
+  TMP_SUDOERS="/tmp/sudoers.hardened"
+
+  # Backup original sudoers file
+  cp "$SUDOERS_FILE" "${SUDOERS_FILE}.bak"
+
+  # Build hardened sudoers fragment
+  cat << 'EOF' > "$TMP_SUDOERS"
+############################# Hardening ##################################
+Cmnd_Alias SH_CMD = /usr/bin/sh, /usr/bin/ksh
+Cmnd_Alias LOG_CMD = /usr/sbin/service rsyslog *, /usr/bin/systemctl * rsyslog
+Cmnd_Alias FIREWALL_CMD = /usr/bin/firewall-cmd, /bin/vi /etc/sysconfig/iptables, /usr/bin/vim /etc/sysconfig/iptables
+Cmnd_Alias SELINUX_CMD = /bin/vi /etc/selinux/config, /bin/vim /etc/selinux/config, /usr/bin/vi /etc/selinux/config, /usr/bin/vim /etc/selinux/config, /bin/vi /etc/selinux/semanage.conf, /bin/vim /etc/selinux/semanage.conf, /usr/bin/vi /etc/selinux/semanage.conf, /usr/bin/vim /etc/selinux/semanage.conf
+Cmnd_Alias BASH_CMD = /bin/vi /etc/bashrc, /bin/vim /etc/bashrc, /usr/bin/vi /etc/bashrc, /usr/bin/vim /etc/bashrc
+Cmnd_Alias FS_CMD = /bin/vi /etc/fstab, /bin/vim /etc/fstab, /usr/bin/vi /etc/fstab, /usr/bin/vim /etc/fstab
+Cmnd_Alias ACCESS_CMD = /usr/sbin/visudo, /bin/vi /etc/sudoers, /bin/vim /etc/sudoers, /usr/bin/vi /etc/sudoers, /usr/bin/vim /etc/sudoers
+#Cmnd_Alias INSTALL_CMD = /usr/bin/yum, /usr/bin/rpm
+Cmnd_Alias SSH_CMD = /bin/vi /etc/ssh/sshd_config, /usr/bin/vi /etc/ssh/sshd_config, /usr/bin/vim /etc/ssh/sshd_config, /bin/vim /etc/ssh/sshd_config
+Cmnd_Alias SUDO_CMD = /bin/sudo "-i", /bin/su "-i", /usr/bin/sudo "-i", /usr/bin/su "-i", /usr/bin/su "-", /usr/su "-", /bin/bash, /bin/su, /bin/sudo, /usr/bin/sudo
+#Cmnd_Alias MNT_CMD = /usr/sbin/lshw, /sbin/lshw, /usr/sbin/lspci, /sbin/lspci, /usr/sbin/dmidecode --type bios --type system, /sbin/dmidecode --type bios --type system
+Cmnd_Alias PASS_CMD = /usr/bin/passwd, /bin/passwd, /bin/vi /etc/passwd, /bin/vim /etc/passwd, /usr/bin/vi /etc/passwd, /usr/bin/vim /etc/passwd, /bin/vi /etc/shadow, /bin/vim /etc/shadow, /usr/bin/vi /etc/shadow, /usr/bin/vim /etc/shadow
+#######################################################################
+%admin ALL=(ALL) NOPASSWD: ALL, !SUDO_CMD, !LOG_CMD, !FIREWALL_CMD, !SELINUX_CMD, !SSH_CMD, !BASH_CMD, !FS_CMD, !ACCESS_CMD, !SH_CMD, !PASS_CMD
+#################################################################
+EOF
+
+  # Remove default %admin rule if present
+  if grep -q "%admin ALL=(ALL) ALL" "$SUDOERS_FILE"; then
+    sed -i '/%admin ALL=(ALL) ALL/d' "$SUDOERS_FILE"
+  fi
+
+  # Append hardened rules
+  cat "$TMP_SUDOERS" >> "$SUDOERS_FILE"
+
+  # Validate sudoers syntax
+  if visudo -c &>/tmp/visudo_check.log; then
+    run_command "cat /tmp/visudo_check.log" "8.5 Hardened sudoers configuration applied successfully"
+  else
+    cp "${SUDOERS_FILE}.bak" "$SUDOERS_FILE"
+    run_command "cat /tmp/visudo_check.log" "8.5 visudo syntax check failed — reverted to backup"
+  fi
+
+fi
+
+# =====================[ SECTION 8.6: Harden Shell History Behavior ]=====================
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.6" || "$TARGET_SECTION" == "8" ]]; then
+
+  start_section "8.6"
+
+  # Step 1: Set history size limits system-wide
+  run_command "grep -q '^export HISTSIZE=' /etc/bash.bashrc && sed -i 's/^export HISTSIZE=.*/export HISTSIZE=5000/' /etc/bash.bashrc || echo 'export HISTSIZE=5000' >> /etc/bash.bashrc" \
+  "8.6.1 Set HISTSIZE to 5000 in /etc/bash.bashrc"
+
+  run_command "grep -q '^export HISTFILESIZE=' /etc/bash.bashrc && sed -i 's/^export HISTFILESIZE=.*/export HISTFILESIZE=2000/' /etc/bash.bashrc || echo 'export HISTFILESIZE=2000' >> /etc/bash.bashrc" \
+  "8.6.2 Set HISTFILESIZE to 2000 in /etc/bash.bashrc"
+
+  # Step 2: Enable timestamping of history entries
+  run_command "grep -q '^export HISTTIMEFORMAT=' /etc/bash.bashrc && sed -i 's|^export HISTTIMEFORMAT=.*|export HISTTIMEFORMAT=\"%F %T \"|' /etc/bash.bashrc || echo 'export HISTTIMEFORMAT=\"%F %T \"' >> /etc/bash.bashrc" \
+  "8.6.3 Enable HISTTIMEFORMAT for timestamped history"
+
+  # Step 3: Prevent disabling history with 'set +o history'
+  run_command "grep -q \"You Can't Execute Disable History Command!!\" /etc/bash.bashrc || (cat > /tmp/set_override.sh << 'EOF'
+set() {
+  temp=\$(echo \"\$@\" | tr -d \" \" | grep \"+ohistory\")
+  if [ \"\$temp\" != \"\" ]; then
+    echo \"You Can't Execute Disable History Command!!\"
+    return
+  fi
+  builtin set \"\$@\"
+}
+EOF
+cat /tmp/set_override.sh >> /etc/bash.bashrc && rm /tmp/set_override.sh)" \
+"8.6.4 Override 'set' to block disabling history"
+
+
+  # Step 4: Also apply settings to /etc/bash-global-history if it exists
+  if [[ -f /etc/bash-global-history ]]; then
+    run_command "grep -q '^export HISTSIZE=' /etc/bash-global-history && sed -i 's/^export HISTSIZE=.*/export HISTSIZE=5000/' /etc/bash-global-history || echo 'export HISTSIZE=5000' >> /etc/bash-global-history" \
+    "8.6.5 Set HISTSIZE in /etc/bash-global-history"
+
+    run_command "grep -q '^export HISTFILESIZE=' /etc/bash-global-history && sed -i 's/^export HISTFILESIZE=.*/export HISTFILESIZE=2000/' /etc/bash-global-history || echo 'export HISTFILESIZE=2000' >> /etc/bash-global-history" \
+    "8.6.6 Set HISTFILESIZE in /etc/bash-global-history"
+
+    run_command "grep -q '^export HISTTIMEFORMAT=' /etc/bash-global-history && sed -i 's|^export HISTTIMEFORMAT=.*|export HISTTIMEFORMAT=\"%F %T \"|' /etc/bash-global-history || echo 'export HISTTIMEFORMAT=\"%F %T \"' >> /etc/bash-global-history" \
+    "8.6.7 Set HISTTIMEFORMAT in /etc/bash-global-history"
+  fi
+fi
+
 
 
 
