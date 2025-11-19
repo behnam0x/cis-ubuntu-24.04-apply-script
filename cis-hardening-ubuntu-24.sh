@@ -339,49 +339,77 @@ fi
 #############################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.3" ]]; then
 
- # =====================[ SECTION 1.3.1.1: Ensure AppArmor is installed ]=====================
- start_section "1.3.1.1"
- 
- # Install AppArmor and utilities
- run_command "apt install -y apparmor apparmor-utils" "1.3.1.1 Install AppArmor and apparmor-utils"
- 
- # =====================[ SECTION 1.3.1.2: Ensure AppArmor is enabled in GRUB ]=====================
- start_section "1.3.1.2"
- 
- # Define required GRUB parameters
- grub_file="/etc/default/grub"
- required_params="apparmor=1 security=apparmor"
- 
- # Ensure GRUB_CMDLINE_LINUX includes required parameters
- if grep -q '^GRUB_CMDLINE_LINUX=' "$grub_file"; then
-   if ! grep -q "$required_params" "$grub_file"; then
-     run_command "sed -i '/^GRUB_CMDLINE_LINUX=/ s/\"\$/ $required_params\"/' $grub_file" "1.3.1.2 Add AppArmor parameters to GRUB_CMDLINE_LINUX"
-   else
-     log_message "1.3.1.2 GRUB already contains AppArmor parameters"
-   fi
- else
-   run_command "echo 'GRUB_CMDLINE_LINUX=\"$required_params\"' >> $grub_file" "1.3.1.2 Insert GRUB_CMDLINE_LINUX with AppArmor parameters"
- fi
- 
- # Update GRUB configuration
- run_command "update-grub" "1.3.1.2 Apply GRUB configuration changes"
- 
- # =====================[ SECTION 1.3.1.3: Ensure AppArmor profiles are in enforce mode ]=====================
- start_section "1.3.1.3"
- 
- # Set all AppArmor profiles to enforce mode
- run_command "aa-enforce /etc/apparmor.d/*" "1.3.1.3 Set all AppArmor profiles to enforce mode"
- 
- # Optional: To use complain mode instead, replace the above line with:
- # run_command "aa-complain /etc/apparmor.d/*" "1.3.1.3 Set all AppArmor profiles to complain mode"
- 
- 
- # =====================[ SECTION 1.3.1.4: Ensure all AppArmor profiles are enforcing ]=====================
- start_section "1.3.1.4"
- 
- # Set all AppArmor profiles to enforce mode
- run_command "aa-enforce /etc/apparmor.d/*" "1.3.1.4 Set all AppArmor profiles to enforce mode"
+  # =====================[ SECTION 1.3.1.1: Ensure AppArmor is installed ]=====================
+  start_section "1.3.1.1"
+
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
+
+  if ! dpkg -s apparmor >/dev/null 2>&1; then
+    if is_online; then
+      run_command "apt install -y apparmor apparmor-utils" \
+      "1.3.1.1 Install AppArmor and apparmor-utils"
+    else
+      log_message "1.3.1.1 System appears to be offline — attempting offline AppArmor install"
+
+      if [ -d "$DEB_DIR" ]; then
+        for pkg in apparmor apparmor-utils; do
+          file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
+          if [[ -n "$file" ]]; then
+            dpkg -i "$file"
+            log_success "1.3.1.1 Installed $pkg from offline package"
+          else
+            log_error "1.3.1.1 Missing offline package for $pkg"
+          fi
+        done
+        apt-get install -f -y
+      else
+        log_error "1.3.1.1 Offline package directory not found: $DEB_DIR"
+      fi
+    fi
+  else
+    log_message "1.3.1.1 [✓] AppArmor is already installed"
+  fi
+
+  # =====================[ SECTION 1.3.1.2: Ensure AppArmor is enabled in GRUB ]=====================
+  start_section "1.3.1.2"
+
+  grub_file="/etc/default/grub"
+  required_params="apparmor=1 security=apparmor"
+
+  if grep -q '^GRUB_CMDLINE_LINUX=' "$grub_file"; then
+    if ! grep -q "$required_params" "$grub_file"; then
+      run_command "sed -i '/^GRUB_CMDLINE_LINUX=/ s/\"\$/ $required_params\"/' $grub_file" \
+      "1.3.1.2 Add AppArmor parameters to GRUB_CMDLINE_LINUX"
+    else
+      log_message "1.3.1.2 GRUB already contains AppArmor parameters"
+    fi
+  else
+    run_command "echo 'GRUB_CMDLINE_LINUX=\"$required_params\"' >> $grub_file" \
+    "1.3.1.2 Insert GRUB_CMDLINE_LINUX with AppArmor parameters"
+  fi
+
+  run_command "update-grub" \
+  "1.3.1.2 Apply GRUB configuration changes"
+
+  # =====================[ SECTION 1.3.1.3: Ensure AppArmor profiles are in enforce mode ]=====================
+  start_section "1.3.1.3"
+
+  run_command "aa-enforce /etc/apparmor.d/*" \
+  "1.3.1.3 Set all AppArmor profiles to enforce mode"
+
+  # Optional: To use complain mode instead, replace the above line with:
+  # run_command "aa-complain /etc/apparmor.d/*" "1.3.1.3 Set all AppArmor profiles to complain mode"
+
+  # =====================[ SECTION 1.3.1.4: Ensure all AppArmor profiles are enforcing ]=====================
+  start_section "1.3.1.4"
+
+  run_command "aa-enforce /etc/apparmor.d/*" \
+  "1.3.1.4 Reapply enforce mode to all AppArmor profiles"
+
 fi
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.4" ]]; then
