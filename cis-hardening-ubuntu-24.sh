@@ -10,15 +10,15 @@ RUN_TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
 BASE_LOG_DIR="/home/${SUDO_USER:-$(whoami)}/setup_logs"
 
 if [ "$USE_TIMESTAMP" = true ]; then
-  LOG_DIR="$BASE_LOG_DIR/$RUN_TIMESTAMP"
-  mkdir -p "$LOG_DIR"
+  LOG_DIR1="$BASE_LOG_DIR/$RUN_TIMESTAMP"
+  mkdir -p "$LOG_DIR1"
   # 🧹 Keep only the 5 most recent timestamped log folders
   cd "$BASE_LOG_DIR"
   ls -dt */ | tail -n +6 | xargs -r rm -rf
 else
-  LOG_DIR="$BASE_LOG_DIR"
-  rm -rf "$LOG_DIR"/*
-  mkdir -p "$LOG_DIR"
+  LOG_DIR1="$BASE_LOG_DIR"
+  rm -rf "$LOG_DIR1"/*
+  mkdir -p "$LOG_DIR1"
 fi
 
 CURRENT_SECTION=""
@@ -31,10 +31,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEB_DIR="/home/harden/packages"
 
 # =====================[ LOGGING FILES ]=====================
-SUCCESS_LOG="$LOG_DIR/success.log"
-ERROR_LOG="$LOG_DIR/error.log"
-INFO_LOG="$LOG_DIR/info.log"
-DETAILS_LOG="$LOG_DIR/details.log"
+SUCCESS_LOG="$LOG_DIR1/success.log"
+ERROR_LOG="$LOG_DIR1/error.log"
+INFO_LOG="$LOG_DIR1/info.log"
+DETAILS_LOG="$LOG_DIR1/details.log"
 
 > "$SUCCESS_LOG"
 > "$ERROR_LOG"
@@ -5730,7 +5730,7 @@ echo ""
 echo -e "\e[32m✅ CIS Ubuntu 24.04 hardening complete.\e[0m"
 echo -e "\e[34m📌 Please review any warnings or manual steps noted during execution.\e[0m"
 echo -e "\e[33m🔁 A reboot may be required for certain changes to take effect.\e[0m"
-echo -e "\e[36m🗂️ Logs saved to: $LOG_DIR\e[0m"
+echo -e "\e[36m🗂️ Logs saved to: $LOG_DIR1\e[0m"
 echo ""
 
 # 📊 Summary of results
@@ -5747,7 +5747,7 @@ for section in $(printf "%s\n" "${!SUCCESS_COUNT[@]}" | sort -V); do
 done
 
 # 📄 Global error log summary
-ERROR_LOG="$LOG_DIR/error.log"
+ERROR_LOG="$LOG_DIR1/error.log"
 if [ -s "$ERROR_LOG" ]; then
   echo ""
   echo -e "\e[31m❗ Errors were recorded during execution.\e[0m"
@@ -5760,10 +5760,10 @@ fi
 # 📁 Log file paths
 echo ""
 echo -e "\e[36m📁 Log files for this run:\e[0m"
-echo "    ├── Success log: $LOG_DIR/success.log"
-echo "    ├── Error log:   $LOG_DIR/error.log"
-echo "    ├── Info log:    $LOG_DIR/info.log"
-echo "    └── Details log: $LOG_DIR/details.log"
+echo "    ├── Success log: $LOG_DIR1/success.log"
+echo "    ├── Error log:   $LOG_DIR1/error.log"
+echo "    ├── Info log:    $LOG_DIR1/info.log"
+echo "    └── Details log: $LOG_DIR1/details.log"
 
 echo ""
 echo -e "\e[36m🛡️ Stay secure. Stay compliant.\e[0m"
