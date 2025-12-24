@@ -7,16 +7,16 @@
 USE_TIMESTAMP=true  # Set to false to reuse the same log folder
 
 RUN_TIMESTAMP=$(date '+%Y-%m-%d_%H-%M-%S')
-BASE_LOG_DIR="/home/${SUDO_USER:-$(whoami)}/setup_logs"
+BASE_LOG_DIR1="/home/${SUDO_USER:-$(whoami)}/setup_logs"
 
 if [ "$USE_TIMESTAMP" = true ]; then
-  LOG_DIR1="$BASE_LOG_DIR/$RUN_TIMESTAMP"
+  LOG_DIR1="$BASE_LOG_DIR1/$RUN_TIMESTAMP"
   mkdir -p "$LOG_DIR1"
   # 🧹 Keep only the 5 most recent timestamped log folders
-  cd "$BASE_LOG_DIR"
+  cd "$BASE_LOG_DIR1"
   ls -dt */ | tail -n +6 | xargs -r rm -rf
 else
-  LOG_DIR1="$BASE_LOG_DIR"
+  LOG_DIR="$BASE_LOG_DIR1"
   rm -rf "$LOG_DIR1"/*
   mkdir -p "$LOG_DIR1"
 fi
@@ -66,6 +66,7 @@ log_message() {
   echo -e "\e[36m$MSG\e[0m" | tee -a "$INFO_LOG"
 }
 
+
 run_command() {
   local CMD="$1"
   local DESC="$2"
@@ -109,7 +110,7 @@ print_summary() {
   echo -e "\e[32m✅ CIS Ubuntu 24.04 hardening complete.\e[0m"
   echo -e "\e[34m📌 Please review any warnings or manual steps noted during execution.\e[0m"
   echo -e "\e[33m🔁 A reboot may be required for certain changes to take effect.\e[0m"
-  echo -e "\e[36m🗂️ Logs saved to: $LOG_DIR\e[0m"
+  echo -e "\e[36m🗂️ Logs saved to: $LOG_DIR1\e[0m"
   echo ""
 
   echo -e "\e[36m📊 Summary of results:\e[0m"
@@ -191,18 +192,27 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.1" ]]; then
     fi
   done
 
+
   # =====================[ SECTION 1.1.1.10: Disable Unused Filesystem Modules with Known CVEs ]=====================
   start_section "1.1.1.10"
 
   # List of high-risk modules to disable if unused
   for mod in afs ceph cifs exfat ext fat fscache fuse gfs2 nfs_common nfsd smbfs_common; do
-    # Check if module exists and is not in use
     if modinfo "$mod" &>/dev/null && ! lsmod | grep -q "^$mod"; then
       disable_module "$mod"
+
+      # Add to blacklist if not already present
+      if ! grep -qE "^\s*blacklist\s+$mod\b" /etc/modprobe.d/blacklist-cis.conf 2>/dev/null; then
+        echo "blacklist $mod" >> /etc/modprobe.d/blacklist-cis.conf
+        log_message "1.1.1.10 Blacklisted module $mod in /etc/modprobe.d/blacklist-cis.conf"
+      else
+        log_message "1.1.1.10 Module $mod already blacklisted"
+      fi
     else
       log_message "1.1.1.10 Module $mod is loaded or not found — review manually before disabling"
     fi
   done
+
 
   # =====================[ SECTION 1.1.2: Configure Filesystem Partitions ]=====================
   start_section "1.1.2"
@@ -346,15 +356,15 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.3" ]]; then
     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
   }
 
-  if ! dpkg -s apparmor >/dev/null 2>&1; then
+  if ! dpkg -s apparmor-utils >/dev/null 2>&1; then
     if is_online; then
-      run_command "apt install -y apparmor apparmor-utils" \
+      run_command "apt install -y apparmor  python3-apparmor apparmor-utils" \
       "1.3.1.1 Install AppArmor and apparmor-utils"
     else
       log_message "1.3.1.1 System appears to be offline — attempting offline AppArmor install"
 
       if [ -d "$DEB_DIR" ]; then
-        for pkg in apparmor apparmor-utils; do
+        for pkg in apparmor python3-apparmor apparmor-utils; do
           file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
           if [[ -n "$file" ]]; then
             dpkg -i "$file"
@@ -410,7 +420,6 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.3" ]]; then
 
 fi
 
-
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "1.4" ]]; then
 
@@ -436,6 +445,7 @@ EOF
 
   run_command "chmod 700 $CUSTOM_GRUB_FILE" "1.4.1 Set executable permissions on GRUB password script"
   run_command "update-grub" "1.4.1 Apply GRUB configuration changes"
+  run_command "sed -i 's/^CLASS=\"--class gnu-linux --class gnu --class os \"/CLASS=\"--class gnu-linux --class gnu --class os --unrestricted\"/' /etc/grub.d/10_linux" \ "1.4.3 Add --unrestricted to GRUB CLASS line"
 
   # =====================[ SECTION 1.4.2: Ensure access to bootloader config is configured ]=====================
   start_section "1.4.2"
@@ -444,6 +454,7 @@ EOF
   run_command "chmod 600 /boot/grub/grub.cfg" "1.4.2 Set secure permissions on grub.cfg"
 
 fi
+
 
 
 ########################################################################################
@@ -576,9 +587,9 @@ All data and actions are logged. Violations will be investigated and prosecuted.
 EOF
   )
 
-  run_command "printf '%s\n' \"$BANNER\" > /etc/issue" "1.6.2 Set /etc/issue banner (local login)"
-  run_command "printf '%s\n' \"$BANNER\" > /etc/issue.net" "1.6.3 Set /etc/issue.net banner (remote login)"
-  run_command "sed -i '/^Banner /d' /etc/ssh/sshd_config && echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config" "1.6.x Configure SSH banner directive"
+  run_command "printf '%s\n' \"$BANNER\" > /etc/issue" "1.6.2 Ensure local login warning banner is configured properly {Set /etc/issue banner (local login)}"
+  run_command "printf '%s\n' \"$BANNER\" > /etc/issue.net" "1.6.3 Ensure remote login warning banner is configured properly {Set /etc/issue.net banner (remote login)}"
+  run_command "sed -i '/^Banner /d' /etc/ssh/sshd_config && echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config" "1.6.x Ensure access to /etc/issue.net is configured  Configure SSH banner directive"
 
   # =====================[ 1.6.1: Create Custom MOTD Script ]=====================
   run_command "mkdir -p /etc/update-motd.d" "1.6.1 Ensure MOTD directory exists"
@@ -896,6 +907,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.1" ]]; then
     log_message "2.1.21 Postfix is not installed — skipping"
   fi
 
+
   # =====================[ SECTION 2.1.22: Restrict Network-Listening Services ]=====================
   start_section "2.1.22"
 
@@ -917,21 +929,30 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.1" ]]; then
   for svc in "${!SERVICES_PACKAGES[@]}"; do
     pkg="${SERVICES_PACKAGES[$svc]}"
 
+    # Check if service or socket is defined
     if systemctl list-unit-files | grep -q "^${svc}" || systemctl list-unit-files | grep -q "^${svc}.socket"; then
+
+      # Stop and mask if active
       if systemctl is-active "${svc}.service" &>/dev/null || systemctl is-active "${svc}.socket" &>/dev/null; then
-        run_command "systemctl stop ${svc}.service ${svc}.socket" "2.1.22 Stop ${svc} service and socket"
+        run_command "systemctl stop \"${svc}.service\" \"${svc}.socket\"" "2.1.22 Stop ${svc} service and socket"
       fi
 
+      run_command "systemctl mask \"${svc}.service\" \"${svc}.socket\"" "2.1.22 Mask ${svc} service and socket"
+
+      # Remove package if installed
       if dpkg -l | grep -qw "$pkg"; then
-        run_command "apt purge -y $pkg" "2.1.22 Remove package: $pkg"
+        run_command "apt purge -y \"$pkg\"" "2.1.22 Remove package: $pkg"
       else
-        run_command "systemctl mask ${svc}.service ${svc}.socket" "2.1.22 Mask ${svc} service and socket"
+        log_message "2.1.22 Package $pkg not installed — only masked ${svc}"
       fi
+
     else
       log_message "2.1.22 ${svc} service not found or inactive — no action needed"
     fi
   done
+
 fi
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.2" ]]; then
@@ -956,100 +977,117 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.2" ]]; then
   done
 fi
 
+########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "2.3" || "$TARGET_SECTION" == 2.3* ]]; then
 
-# =====================[ SECTION 2.3: Configure Time Synchronization ]=====================
-start_section "2.3"
+  # =====================[ SECTION 2.3: Configure Time Synchronization ]=====================
+  start_section "2.3"
 
-# Helper: Check if system is online
-is_online() {
-  ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
-}
+  # Helper: Check if system is online
+  is_online() {
+    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+  }
 
-# === Choose your preferred time sync daemon ===
-TIME_SYNC_DAEMON="chrony"  # Options: chrony or systemd-timesyncd
+  # === Choose your preferred time sync daemon ===
+  TIME_SYNC_DAEMON="chrony"  # Options: chrony or systemd-timesyncd
 
-# ---------------------[ 2.3.1 Ensure time synchronization is in use ]---------------------
-start_section "2.3.1"
-log_message "2.3.1 Ensure time synchronization is in use"
+  # ---------------------[ 2.3.1 Ensure time synchronization is in use ]---------------------
+  start_section "2.3.1"
+  log_message "2.3.1 Ensure time synchronization is in use"
 
-if [[ "$TIME_SYNC_DAEMON" == "chrony" ]]; then
+  if [[ "$TIME_SYNC_DAEMON" == "chrony" ]]; then
 
-  # ---------------------[ 2.3.1.1 Ensure a single time synchronization daemon is in use ]---------------------
-  start_section "2.3.1.1"
-  run_command "systemctl mask systemd-timesyncd.service" "2.3.1.1 Mask systemd-timesyncd to avoid conflict"
+    # ---------------------[ 2.3.1.1 Ensure a single time synchronization daemon is in use ]---------------------
+    start_section "2.3.1.1"
+    run_command "systemctl mask systemd-timesyncd.service" "2.3.1.1 Mask systemd-timesyncd to avoid conflict"
 
-  # ---------------------[ 2.3.3 Configure chrony ]---------------------
-  start_section "2.3.3"
-  run_command "timedatectl set-timezone Asia/Tehran" "2.3.3 Set timezone to Asia/Tehran"
+    # ---------------------[ 2.3.3 Configure chrony ]---------------------
+    start_section "2.3.3"
+    run_command "timedatectl set-timezone Asia/Tehran" "2.3.3 Set timezone to Asia/Tehran"
 
-  # ---------------------[ 2.3.3.0 Install chrony ]---------------------
-  start_section "2.3.3.0"
-  if is_online; then
-    run_command "apt update && apt install -y chrony" "2.3.3.0 Install chrony"
-  else
-    log_message "2.3.3.0 Skipped chrony install: system appears to be offline"
-  fi
+    # ---------------------[ 2.3.3.0 Install chrony ]---------------------
+    start_section "2.3.3.0"
+    if dpkg-query -W -f='${Status}' chrony 2>/dev/null | grep -q "install ok installed"; then
+      log_message "2.3.3.0 [✓] chrony is already installed"
+    else
+      if is_online; then
+        run_command "apt update && apt install -y chrony" "2.3.3.0 Install chrony"
+      else
+        log_message "2.3.3.0 System appears to be offline — attempting offline chrony install"
+        if [ -d "$DEB_DIR" ]; then
+          file=$(find "$DEB_DIR" -type f -name "chrony_*.deb" | head -n 1)
+          if [[ -n "$file" ]]; then
+            dpkg -i "$file" && apt-get install -f -y
+            log_success "2.3.3.0 Installed chrony from offline package"
+          else
+            log_error "2.3.3.0 Missing offline package for chrony"
+          fi
+        else
+          log_error "2.3.3.0 Offline package directory not found: $DEB_DIR"
+        fi
+      fi
+    fi
 
-  # ---------------------[ 2.3.3.1 Ensure chrony is configured with authorized timeserver ]---------------------
-  start_section "2.3.3.1"
-  CHRONY_CONF="/etc/chrony/chrony.conf"
-  CHRONY_POOL="pool asia.pool.ntp.org iburst"
-  if ! grep -qE '^server|^pool' "$CHRONY_CONF"; then
-    run_command "echo '${CHRONY_POOL}' >> ${CHRONY_CONF}" "2.3.3.1 Configure chrony with NTP pool"
-  fi
+    # ---------------------[ 2.3.3.1 Ensure chrony is configured with authorized timeserver ]---------------------
+    start_section "2.3.3.1"
+    CHRONY_CONF="/etc/chrony/chrony.conf"
+    CHRONY_POOL="pool asia.pool.ntp.org iburst"
+    if ! grep -qE '^server|^pool' "$CHRONY_CONF"; then
+      run_command "echo '${CHRONY_POOL}' >> ${CHRONY_CONF}" "2.3.3.1 Configure chrony with NTP pool"
+    fi
 
-  # ---------------------[ 2.3.3.2 Ensure chrony is running as user _chrony ]---------------------
-  start_section "2.3.3.2"
-  CHRONY_SERVICE="/lib/systemd/system/chrony.service"
-  if grep -q '^User=' "$CHRONY_SERVICE"; then
-    run_command "sed -i 's/^User=.*/User=_chrony/' $CHRONY_SERVICE" "2.3.3.2 Ensure chrony runs as _chrony"
-  else
-    run_command "sed -i '/^
+    # ---------------------[ 2.3.3.2 Ensure chrony is running as user _chrony ]---------------------
+    start_section "2.3.3.2"
+    CHRONY_SERVICE="/lib/systemd/system/chrony.service"
+    if grep -q '^User=' "$CHRONY_SERVICE"; then
+      run_command "sed -i 's/^User=.*/User=_chrony/' $CHRONY_SERVICE" "2.3.3.2 Ensure chrony runs as _chrony"
+    else
+      run_command "sed -i '/^
 
 \[Service\]
 
 /a User=_chrony' $CHRONY_SERVICE" "2.3.3.2 Add User=_chrony to chrony.service"
-  fi
+    fi
 
-  # ---------------------[ 2.3.3.3 Ensure chrony is enabled and running ]---------------------
-  start_section "2.3.3.3"
-  run_command "systemctl daemon-reexec" "2.3.3.3 Reload systemd daemon"
-  run_command "systemctl enable chrony" "2.3.3.3 Enable chrony"
-  run_command "systemctl restart chrony" "2.3.3.3 Restart chrony"
+    # ---------------------[ 2.3.3.3 Ensure chrony is enabled and running ]---------------------
+    start_section "2.3.3.3"
+    run_command "systemctl daemon-reexec" "2.3.3.3 Reload systemd daemon"
+    run_command "systemctl enable chrony" "2.3.3.3 Enable chrony"
+    run_command "systemctl restart chrony" "2.3.3.3 Restart chrony"
 
-elif [[ "$TIME_SYNC_DAEMON" == "systemd-timesyncd" ]]; then
+  elif [[ "$TIME_SYNC_DAEMON" == "systemd-timesyncd" ]]; then
 
-  # ---------------------[ 2.3.1.1 Ensure a single time synchronization daemon is in use ]---------------------
-  start_section "2.3.1.1"
-  run_command "apt purge -y chrony && apt autoremove -y chrony" "2.3.1.1 Remove chrony to avoid conflict"
+    # ---------------------[ 2.3.1.1 Ensure a single time synchronization daemon is in use ]---------------------
+    start_section "2.3.1.1"
+    run_command "apt purge -y chrony && apt autoremove -y chrony" "2.3.1.1 Remove chrony to avoid conflict"
 
-  # ---------------------[ 2.3.2 Configure systemd-timesyncd ]---------------------
-  start_section "2.3.2"
-  run_command "timedatectl set-timezone Asia/Tehran" "2.3.2 Set timezone to Asia/Tehran"
+    # ---------------------[ 2.3.2 Configure systemd-timesyncd ]---------------------
+    start_section "2.3.2"
+    run_command "timedatectl set-timezone Asia/Tehran" "2.3.2 Set timezone to Asia/Tehran"
 
-  # ---------------------[ 2.3.2.1 Ensure systemd-timesyncd configured with authorized timeserver ]---------------------
-  start_section "2.3.2.1"
-  TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
-  TIMESERVER="pool asia.pool.ntp.org"
-  if grep -q "^NTP=" "$TIMESYNC_CONF"; then
-    run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3.2.1 Update NTP server in timesyncd.conf"
-  else
-    run_command "sed -i '/^
+    # ---------------------[ 2.3.2.1 Ensure systemd-timesyncd configured with authorized timeserver ]---------------------
+    start_section "2.3.2.1"
+    TIMESYNC_CONF="/etc/systemd/timesyncd.conf"
+    TIMESERVER="pool asia.pool.ntp.org"
+    if grep -q "^NTP=" "$TIMESYNC_CONF"; then
+      run_command "sed -i 's/^NTP=.*/NTP=${TIMESERVER}/' $TIMESYNC_CONF" "2.3.2.1 Update NTP server in timesyncd.conf"
+    else
+      run_command "sed -i '/^
 
 \[Time\]
 
 /a NTP=${TIMESERVER}' $TIMESYNC_CONF" "2.3.2.1 Add NTP server to timesyncd.conf"
+    fi
+
+    # ---------------------[ 2.3.2.2 Ensure systemd-timesyncd is enabled and running ]---------------------
+    start_section "2.3.2.2"
+    run_command "systemctl enable systemd-timesyncd" "2.3.2.2 Enable systemd-timesyncd"
+    run_command "systemctl start systemd-timesyncd" "2.3.2.2 Start systemd-timesyncd"
+
   fi
 
-  # ---------------------[ 2.3.2.2 Ensure systemd-timesyncd is enabled and running ]---------------------
-  start_section "2.3.2.2"
-  run_command "systemctl enable systemd-timesyncd" "2.3.2.2 Enable systemd-timesyncd"
-  run_command "systemctl start systemd-timesyncd" "2.3.2.2 Start systemd-timesyncd"
-
 fi
 
-fi
 
 
 #####################################################################################
@@ -1754,7 +1792,7 @@ fi
 
 
 ##############################################################################################
-if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" == "4.2" || "$TARGET_SECTION" == "4.3" || "$TARGET_SECTION" == "4.4" ]]; then
+if [[ -z "$TARGET_SECTION" ||"$TARGET_SECTION" == "4" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" == "4.2" || "$TARGET_SECTION" == "4.3" || "$TARGET_SECTION" == "4.4" ]]; then
   # =====================[ SECTION 4.1.1: Choose and Configure Single Firewall Utility ]=====================
   start_section "4.1.1"
 
@@ -1788,17 +1826,17 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" ==
         run_command "apt-get install -y $pkg" "$section Install $pkg online"
       else
         log_message "$section System appears to be offline — attempting offline install of $pkg"
-        if [ -d "$deb_dir" ]; then
-          local file=$(find "$deb_dir" -type f -name "${pkg}_*.deb" | head -n 1)
+        if [ -d "$DEB_DIR" ]; then
+          local file=$(find "$DEB_DIR" -type f -name "${pkg}_*.deb" | head -n 1)
           if [[ -n "$file" ]]; then
             dpkg -i "$file" > "$log_file" 2>&1
             apt-get install -f -y >> "$log_file" 2>&1
             log_message "$section [✓] $pkg installed from offline package"
           else
-            log_message "$section [✗] Offline package for $pkg not found in $deb_dir"
+            log_message "$section [✗] Offline package for $pkg not found in $DEB_DIR"
           fi
         else
-          log_message "$section [✗] Offline package directory not found: $deb_dir"
+          log_message "$section [✗] Offline package directory not found: $DEB_DIR"
         fi
       fi
     }
@@ -1822,6 +1860,35 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "4.1" || "$TARGET_SECTION" ==
     run_command "ufw default deny incoming" "4.2.7 Set default deny for incoming traffic"
     run_command "ufw default deny outgoing" "4.2.7 Set default deny for outgoing traffic"
     run_command "ufw default deny routed" "4.2.7 Set default deny for routed traffic"
+	
+
+    # =====================[ SECTION 8.4: Allow Specific UFW Ports ]=====================
+    start_section "8.4"
+    
+    echo ""
+    echo "🔐 UFW Setup: Enter the ports you want to allow (comma-separated)."
+    echo "   Example: 22/tcp,53/tcp,5050/tcp,514/tcp,514/udp,161/udp,80/tcp"
+    read -p "➡ Ports to allow: " USER_PORTS
+    
+    # If user presses Enter without input, use defaults
+    if [[ -z "$USER_PORTS" ]]; then
+      USER_PORTS="22/tcp,53/tcp,5050/tcp,514/tcp,514/udp,161/udp,80/tcp"
+      log_message "No custom ports entered. Using default config: $USER_PORTS"
+    fi
+    
+    # Split and apply rules
+    IFS=',' read -ra PORT_ARRAY <<< "$USER_PORTS"
+    for PORT in "${PORT_ARRAY[@]}"; do
+      run_command "ufw allow $PORT" "8.4 Allow port $PORT"
+    done
+    
+    # Verify final firewall state
+    run_command "ufw status verbose" "8.4 Verify enabled UFW ports"
+    
+    end_section 0
+
+
+
 
   elif [[ "$PREFERRED_FIREWALL" == "nftables" ]]; then
     run_command "systemctl disable --now ufw 2>/dev/null || true" "4.1.1 Disable UFW"
@@ -1997,17 +2064,17 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
 
   # =====================[ SECTION 5.1.4: Configure SSHD Access Control ]=====================
   start_section "5.1.4"
-
+ 
   # Define your access control method: either AllowUsers or AllowGroups
   SSHD_ACCESS_TYPE="AllowUsers"  # or "AllowGroups"
-  SSHD_ACCESS_VALUE="adminuser behnam admin"  # space-separated list of users or groups
+  SSHD_ACCESS_VALUE="adminuser root admin"  # space-separated list of users or groups
   SSHD_DIRECTIVE="${SSHD_ACCESS_TYPE} ${SSHD_ACCESS_VALUE}"
-
+ 
   # Backup original config (only once)
   if [ ! -f /etc/ssh/sshd_config.bak ]; then
     run_command "cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak" "5.1.4 Backup sshd_config"
   fi
-
+ 
   # Only insert if directive is not already present
   if ! grep -qF "$SSHD_DIRECTIVE" /etc/ssh/sshd_config; then
     if grep -qE '^\s*(Include|Match)\b' /etc/ssh/sshd_config; then
@@ -2019,10 +2086,10 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.1" ]]; then
   else
     echo "5.1.4 skipped: ${SSHD_ACCESS_TYPE} directive already present in sshd_config"
   fi
-
+ 
   # Restart SSH service to apply changes
   run_command "systemctl restart sshd" "5.1.4 Restart SSH service"
-
+ 
 
 
 
@@ -2568,10 +2635,10 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.2.1" || "$TARGET_SECTION" 
 
   # =====================[ SECTION 5.2.4: Ensure sudo requires password ]=====================
   start_section "5.2.4"
-
+  
   # Remove NOPASSWD entries from /etc/sudoers
   run_command "sed -i '/NOPASSWD/d' /etc/sudoers" "5.2.4 Remove NOPASSWD from /etc/sudoers"
-
+  
   # Remove NOPASSWD entries from valid sudoers.d files
   for file in /etc/sudoers.d/*; do
     if [[ -f \"$file\" && \"$file\" != *~ && \"$file\" != *.* ]]; then
@@ -2579,7 +2646,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.2.1" || "$TARGET_SECTION" 
       run_command \"visudo -cf \"$file\"\" \"5.2.4 Validate syntax of $file\"
     fi
   done
-
+  
   log_message "5.2.4 Success: All NOPASSWD entries removed — sudo now requires password for escalation"
 
   # =====================[ SECTION 5.2.5: Ensure sudo re-authentication is not disabled ]=====================
@@ -2623,24 +2690,24 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.2.1" || "$TARGET_SECTION" 
   # =====================[ SECTION 5.2.7: Restrict access to the su command ]=====================
   start_section "5.2.7"
 
-  # Create the sugroup if it doesn't exist
-  if ! getent group sugroup >/dev/null; then
-    run_command "groupadd sugroup" "5.2.7 Create 'sugroup' for su access restriction"
+  # Create the admin if it doesn't exist
+  if ! getent group admin >/dev/null; then
+    run_command "groupadd admin" "5.2.7 Create 'admin' for su access restriction"
   else
-    log_message "5.2.7 Group 'sugroup' already exists"
+    log_message "5.2.7 Group 'admin' already exists"
   fi
 
   # Add PAM restriction to /etc/pam.d/su if not already present
-  PAM_LINE="auth required pam_wheel.so use_uid group=sugroup"
+  PAM_LINE="auth required pam_wheel.so use_uid group=admin"
   if ! grep -Fxq "$PAM_LINE" /etc/pam.d/su; then
     echo "$PAM_LINE" >> /etc/pam.d/su
-    log_message "5.2.7 PAM configuration updated to restrict su access to 'sugroup'"
+    log_message "5.2.7 PAM configuration updated to restrict su access to 'admin'"
   else
-    log_message "5.2.7 PAM configuration already restricts su access to 'sugroup'"
+    log_message "5.2.7 PAM configuration already restricts su access to 'admin'"
   fi
 
-  # Reminder to add authorized users to sugroup
-  log_message "5.2.7 Manual step: Add authorized users to 'sugroup' to allow su access"
+  # Reminder to add authorized users to admin
+  log_message "5.2.7 Manual step: Add authorized users to 'admin' to allow su access"
 fi
 
 ###############################################################################################
@@ -2939,7 +3006,7 @@ Default: yes
 Priority: 1024
 Password-Type: Primary
 Password:
- requisite pam_pwhistory.so remember=24 enforce_for_root try_first_pass use_authtok
+ requisite pam_pwhistory.so remember=14 enforce_for_root try_first_pass use_authtok
 EOF
     log_message "5.3.2.4 [✓] Created pam_pwhistory profile"
   fi
@@ -2994,24 +3061,37 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.1" || "$TARGET_SECTION
 
   # =====================[ SECTION 5.3.3.1.2: Ensure password unlock time is configured ]=====================
   start_section "5.3.3.1.2"
-
+  
   if [[ -f /etc/security/faillock.conf ]]; then
+    # Update or append unlock_time
     if grep -q '^\s*unlock_time\s*=' /etc/security/faillock.conf; then
-      run_command "sed -i 's/^\s*unlock_time\s*=.*/unlock_time = 900/' /etc/security/faillock.conf" "5.3.3.1.2 [✓] Updated unlock_time value in faillock.conf"
+      run_command "sed -i 's/^\s*unlock_time\s*=.*/unlock_time = 900/' /etc/security/faillock.conf" \
+      "5.3.3.1.2 [✓] Updated unlock_time value in faillock.conf"
     else
       echo "unlock_time = 900" >> /etc/security/faillock.conf
       log_message "5.3.3.1.2 [✓] Appended unlock_time = 900 to faillock.conf"
     fi
+  
+    # Update or append fail_interval
+    if grep -q '^\s*fail_interval\s*=' /etc/security/faillock.conf; then
+      run_command "sed -i 's/^\s*fail_interval\s*=.*/fail_interval = 900/' /etc/security/faillock.conf" \
+      "5.3.3.1.2 [✓] Updated fail_interval value in faillock.conf"
+    else
+      echo "fail_interval = 900" >> /etc/security/faillock.conf
+      log_message "5.3.3.1.2 [✓] Appended fail_interval = 900 to faillock.conf"
+    fi
   else
-    echo "unlock_time = 900" > /etc/security/faillock.conf
-    log_message "5.3.3.1.2 [✓] Created faillock.conf with unlock_time = 900"
+    echo -e "unlock_time = 900\nfail_interval = 900" > /etc/security/faillock.conf
+    log_message "5.3.3.1.2 [✓] Created faillock.conf with unlock_time and fail_interval set to 900"
   fi
-
+  
+  # Clean PAM profiles
   grep -Pl -- '\bpam_faillock\.so\h+([^#\n\r]+\h+)?unlock_time\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
-    run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+unlock_time=[0-9]+/\1/' \"$file\"" "5.3.3.1.2 [✓] Removed unlock_time= from $file"
+    run_command "sed -i -E 's/(pam_faillock\.so[^#\n\r]*)\s+unlock_time=[0-9]+/\1/' \"$file\"" \
+    "5.3.3.1.2 [✓] Removed unlock_time= from $file"
   done
-
-  log_message "5.3.3.1.2 [✓] Success: Unlock time set to 900 seconds and PAM profiles cleaned"
+  
+  log_message "5.3.3.1.2 [✓] Success: unlock_time and fail_interval set to 900 seconds and PAM profiles cleaned"
 
 
   # =====================[ SECTION 5.3.3.1.3: Ensure lockout includes root account ]=====================
@@ -3079,14 +3159,14 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.2" || "$TARGET_SECTION
     run_command "mkdir -p /etc/security/pwquality.conf.d/" "5.3.3.2.2 [✓] Created pwquality.conf.d directory"
   fi
 
-  echo "minlen = 14" > /etc/security/pwquality.conf.d/50-pwlength.conf
-  log_message "5.3.3.2.2 [✓] Set minlen = 14 in 50-pwlength.conf"
+  echo "minlen = 9" > /etc/security/pwquality.conf.d/50-pwlength.conf
+  log_message "5.3.3.2.2 [✓] Set minlen = 9 in 50-pwlength.conf"
 
   grep -Pl -- '\bpam_pwquality\.so\h+([^#\n\r]+\h+)?minlen\b' /usr/share/pam-configs/* 2>/dev/null | while read -r file; do
     run_command "sed -i -E 's/(pam_pwquality\.so[^#\n\r]*)\s+minlen=[0-9]+/\1/' \"$file\"" "5.3.3.2.2 [✓] Removed minlen= from $file"
   done
 
-  log_message "5.3.3.2.2 [✓] Success: Minimum password length configured to 14 characters"
+  log_message "5.3.3.2.2 [✓] Success: Minimum password length configured to 9 characters"
 
 
   # =====================[ SECTION 5.3.3.2.3: Ensure password complexity is configured ]=====================
@@ -3218,9 +3298,9 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.3" || "$TARGET_SECTION
   awk '/Password-Type:/{ f = 1;next } /-Type:/{ f = 0 } f {if (/pam_pwhistory\.so/) print FILENAME}' /usr/share/pam-configs/* 2>/dev/null | sort -u | while read -r file; do
     if grep -q 'pam_pwhistory\.so' "$file"; then
       if grep -q 'pam_pwhistory\.so.*remember=' "$file"; then
-        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)remember=[0-9]+/\1remember=24/' \"$file\"" "5.3.3.3.1 [✓] Updated remember=24 in $file"
+        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)remember=[0-9]+/\1remember=14/' \"$file\"" "5.3.3.3.1 [✓] Updated remember=14 in $file"
       else
-        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 remember=24/' \"$file\"" "5.3.3.3.1 [✓] Added remember=24 to $file"
+        run_command "sed -i -E 's/(pam_pwhistory\.so[^#\n\r]*)/\1 remember=14/' \"$file\"" "5.3.3.3.1 [✓] Added remember=14 to $file"
       fi
 
       PROFILE_NAME=$(basename "$file")
@@ -3228,7 +3308,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.3.3.3" || "$TARGET_SECTION
     fi
   done
 
-  log_message "5.3.3.3.1 [✓] Success: Password history configured with remember=24"
+  log_message "5.3.3.3.1 [✓] Success: Password history configured with remember=14"
 
 
   # =====================[ SECTION 5.3.3.3.2: Ensure password history is enforced for root user ]=====================
@@ -3364,11 +3444,11 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   start_section "5.4.1.1"
   
   # Set PASS_MAX_DAYS in /etc/login.defs
-  run_command "sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 365/' /etc/login.defs" "5.4.1.1 Set PASS_MAX_DAYS to 365 in login.defs"
-  run_command "grep -q '^PASS_MAX_DAYS' /etc/login.defs || echo 'PASS_MAX_DAYS 365' >> /etc/login.defs" "5.4.1.1 Ensure PASS_MAX_DAYS is present in login.defs"
+  run_command "sed -i 's/^PASS_MAX_DAYS.*/PASS_MAX_DAYS 180/' /etc/login.defs" "5.4.1.1 Set PASS_MAX_DAYS to 180 in login.defs"
+  run_command "grep -q '^PASS_MAX_DAYS' /etc/login.defs || echo 'PASS_MAX_DAYS 180' >> /etc/login.defs" "5.4.1.1 Ensure PASS_MAX_DAYS is present in login.defs"
   
   # Update max password age for all users with valid password hashes
-  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$5 > 365 || \$5 < 1) system(\"chage --maxdays 365 \" \$1)}' /etc/shadow" "5.4.1.1 Set max password age to 365 for users"
+  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$5 > 180 || \$5 < 1) system(\"chage --maxdays 180 \" \$1)}' /etc/shadow" "5.4.1.1 Set max password age to 180 for users"
   
   # Set last password change date for users missing it (e.g., root after kickstart)
   run_command 'for user in $(awk -F: '\''($2~/^\$.+\$/) && ($3 == 0 || $1 == "root") {print $1}'\'' /etc/shadow); do chage -d "$(date +%Y-%m-%d)" "$user"; done' "5.4.1.1 Set last password change date for root and UID 0 users"
@@ -3400,14 +3480,14 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   run_command "sed -i 's/^ENCRYPT_METHOD.*/ENCRYPT_METHOD YESCRYPT/' /etc/login.defs" "5.4.1.4 Set ENCRYPT_METHOD to YESCRYPT in login.defs"
   run_command "grep -q '^ENCRYPT_METHOD' /etc/login.defs || echo 'ENCRYPT_METHOD YESCRYPT' >> /etc/login.defs" "5.4.1.4 Ensure ENCRYPT_METHOD is present in login.defs"
   
-  # =====================[ SECTION 5.4.1.5: Ensure inactive password lock is configured ]=====================
-  start_section "5.4.1.5"
-  
-  # Set default inactivity period to 45 days for new users
-  run_command "useradd -D -f 45" "5.4.1.5 Set default inactivity period to 45 days"
-  
-  # Modify user parameters for all users with password hashes and inactive age > 45 or < 0
-  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$7 > 45 || \$7 < 0) system(\"chage --inactive 45 \" \$1)}' /etc/shadow" "5.4.1.5 Enforce 45-day inactivity lock for all users"
+###  # =====================[ SECTION 5.4.1.5: Ensure inactive password lock is configured ]=====================
+###  start_section "5.4.1.5"
+###  
+###  # Set default inactivity period to 45 days for new users
+###  run_command "useradd -D -f 45" "5.4.1.5 Set default inactivity period to 45 days"
+###  
+###  # Modify user parameters for all users with password hashes and inactive age > 45 or < 0
+###  run_command "awk -F: '(\$2~/^\\$.+\\$/) {if(\$7 > 45 || \$7 < 0) system(\"chage --inactive 45 \" \$1)}' /etc/shadow" "5.4.1.5 Enforce 45-day inactivity lock for all users"
   
   # =====================[ SECTION 5.4.1.6: Ensure all users last password change date is in the past ]=====================
   start_section "5.4.1.6"
@@ -3452,7 +3532,7 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "5.4" ]]; then
   # run_command "passwd root" "5.4.2.4 Set password for root account"
   
   # Option 2: Lock the root user account (recommended if root login is disabled)
-   run_command "usermod -L root" "5.4.2.4 Lock root account"
+  ##run_command "usermod -L root" "5.4.2.4 Lock root account"
    
   # =====================[ SECTION 5.4.2.5: Ensure root path integrity ]=====================
   start_section "5.4.2.5"
@@ -3658,70 +3738,70 @@ fi
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.2.1.1" || "$TARGET_SECTION" == "6.1.2" || "$TARGET_SECTION" == "6.1" ]]; then
 
-  # =====================[ SECTION 6.1.2.1.1: Ensure systemd-journal-remote is installed ]=====================
-  start_section "6.1.2.1.1"
+   # =====================[ SECTION 6.1.2.1.1: Ensure systemd-journal-remote is installed ]=====================
+   start_section "6.1.2.1.1"
+ 
+   is_online() {
+     ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
+   }
+ 
+   if dpkg-query -W -f='${Status}' systemd-journal-remote 2>/dev/null | grep -q "install ok installed"; then
+     log_message "6.1.2.1.1 [✓] systemd-journal-remote is already installed"
+   else
+     if is_online; then
+       run_command "apt install -y systemd-journal-remote" "6.1.2.1.1 Install systemd-journal-remote"
+     else
+       log_message "6.1.2.1.1 System appears to be offline — attempting offline install"
+       if [ -d "$DEB_DIR" ]; then
+         file=$(find "$DEB_DIR" -type f -name "systemd-journal-remote_*.deb" | head -n 1)
+         if [[ -n "$file" ]]; then
+           dpkg -i "$file"
+           log_success "6.1.2.1.1 Installed systemd-journal-remote from offline package"
+           apt-get install -f -y
+         else
+           log_error "6.1.2.1.1 Missing offline package for systemd-journal-remote"
+         fi
+       else
+         log_error "6.1.2.1.1 Offline package directory not found: $DEB_DIR"
+       fi
+     fi
+   fi
 
-  is_online() {
-    ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1
-  }
-
-  if dpkg-query -W -f='${Status}' systemd-journal-remote 2>/dev/null | grep -q "install ok installed"; then
-    log_message "6.1.2.1.1 [✓] systemd-journal-remote is already installed"
-  else
-    if is_online; then
-      run_command "apt install -y systemd-journal-remote" "6.1.2.1.1 Install systemd-journal-remote"
-    else
-      log_message "6.1.2.1.1 System appears to be offline — attempting offline install"
-      if [ -d "$DEB_DIR" ]; then
-        file=$(find "$DEB_DIR" -type f -name "systemd-journal-remote_*.deb" | head -n 1)
-        if [[ -n "$file" ]]; then
-          dpkg -i "$file"
-          log_success "6.1.2.1.1 Installed systemd-journal-remote from offline package"
-          apt-get install -f -y
-        else
-          log_error "6.1.2.1.1 Missing offline package for systemd-journal-remote"
-        fi
-      else
-        log_error "6.1.2.1.1 Offline package directory not found: $DEB_DIR"
-      fi
-    fi
-  fi
-
-  # =====================[ SECTION 6.1.2.1.2: Ensure systemd-journal-upload authentication is configured ]=====================
-  start_section "6.1.2.1.2"
-
-  URL="192.168.50.42"
-  CONF_FILE="/etc/systemd/journal-upload.conf.d/60-journald_upload.conf"
-  mkdir -p /etc/systemd/journal-upload.conf.d/
-
-  run_command "bash -c '
-    SETTINGS=(\"URL=$URL\" \"ServerKeyFile=/etc/ssl/private/journal-upload.pem\" \"ServerCertificateFile=/etc/ssl/certs/journal-upload.pem\" \"TrustedCertificateFile=/etc/ssl/ca/trusted.pem\")
-    if grep -q \"^
-
-\[Upload\]
-
-\" \"$CONF_FILE\" 2>/dev/null; then
-      for setting in \"\${SETTINGS[@]}\"; do
-        grep -q \"^\$setting\" \"$CONF_FILE\" || echo \"\$setting\" >> \"$CONF_FILE\"
-      done
-    else
-      {
-        echo \"[Upload]\"
-        for setting in \"\${SETTINGS[@]}\"; do
-          echo \"\$setting\"
-        done
-      } > \"$CONF_FILE\"
-    fi
-  '" "6.1.2.1.2 Configure systemd-journal-upload authentication"
-
-  run_command "systemctl reload-or-restart systemd-journal-upload" "6.1.2.1.2 Reload systemd-journal-upload"
-
-  # =====================[ SECTION 6.1.2.1.3: Ensure systemd-journal-upload is enabled and active ]=====================
-  start_section "6.1.2.1.3"
-
-  run_command "systemctl unmask systemd-journal-upload.service" "6.1.2.1.3 Unmask systemd-journal-upload"
-  run_command "systemctl --now enable systemd-journal-upload.service" "6.1.2.1.3 Enable and start systemd-journal-upload"
-
+   # =====================[ SECTION 6.1.2.1.2: Ensure systemd-journal-upload authentication is configured ]=====================
+   start_section "6.1.2.1.2"
+ 
+   URL="192.168.50.42"
+   CONF_FILE="/etc/systemd/journal-upload.conf.d/60-journald_upload.conf"
+   mkdir -p /etc/systemd/journal-upload.conf.d/
+ 
+   run_command "bash -c '
+     SETTINGS=(\"URL=$URL\" \"ServerKeyFile=/etc/ssl/private/journal-upload.pem\" \"ServerCertificateFile=/etc/ssl/certs/journal-upload.pem\" \"TrustedCertificateFile=/etc/ssl/ca/trusted.pem\")
+     if grep -q \"^
+ 
+ \[Upload\]
+ 
+ \" \"$CONF_FILE\" 2>/dev/null; then
+       for setting in \"\${SETTINGS[@]}\"; do
+         grep -q \"^\$setting\" \"$CONF_FILE\" || echo \"\$setting\" >> \"$CONF_FILE\"
+       done
+     else
+       {
+         echo \"[Upload]\"
+         for setting in \"\${SETTINGS[@]}\"; do
+           echo \"\$setting\"
+         done
+       } > \"$CONF_FILE\"
+     fi
+   '" "6.1.2.1.2 Configure systemd-journal-upload authentication"
+ 
+   run_command "systemctl reload-or-restart systemd-journal-upload" "6.1.2.1.2 Reload systemd-journal-upload"
+ 
+   # =====================[ SECTION 6.1.2.1.3: Ensure systemd-journal-upload is enabled and active ]=====================
+   start_section "6.1.2.1.3"
+ 
+   run_command "systemctl unmask systemd-journal-upload.service" "6.1.2.1.3 Unmask systemd-journal-upload"
+   run_command "systemctl --now enable systemd-journal-upload.service" "6.1.2.1.3 Enable and start systemd-journal-upload"
+ 
   # =====================[ SECTION 6.1.2.1.4: Ensure systemd-journal-remote service is not in use ]=====================
   start_section "6.1.2.1.4"
 
@@ -3980,32 +4060,36 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.1.4" || "$TARGET_SECTION" 
   start_section "6.1.4.1"
 
   run_command "bash -c '
-log_paths=(\"/var/log\" \"/var/lib\" \"/var/audit\")
+log_paths=(\"/var/log\" \"/var/audit\")   # safer scope, exclude /var/lib
 a_output2=()
 
 f_file_test_fix() {
   a_out2=()
   maxperm=\"\$(printf \"%o\" \$((0777 & ~\$perm_mask)))\"
 
+  # Permissions check
   if [ \$((l_mode & perm_mask)) -gt 0 ]; then
     a_out2+=(\" o Mode: \\\"\$l_mode\\\" should be \\\"\$maxperm\\\" or more restrictive\" \" x Removing excess permissions\")
     chmod \"\$l_rperms\" \"\$l_fname\"
   fi
 
+  # Ownership check (preserve syslog, utmp, systemd-journal)
   if [[ ! \"\$l_user\" =~ \$l_auser ]]; then
-    a_out2+=(\" o Owned by: \\\"\$l_user\\\" and should be owned by \\\"\${l_auser//|/ or }\\\"\" \" x Changing ownership to: \\\"\$l_fix_account\\\"\")
-    chown \"\$l_fix_account\" \"\$l_fname\"
+    if [[ \"\$l_user\" != \"syslog\" && \"\$l_user\" != \"systemd-journal\" && \"\$l_user\" != \"utmp\" ]]; then
+      a_out2+=(\" o Owned by: \\\"\$l_user\\\" should be \\\"\${l_auser//|/ or }\\\"\" \" x Changing ownership to: root\")
+      chown root \"\$l_fname\"
+    fi
   fi
 
   if [[ ! \"\$l_group\" =~ \$l_agroup ]]; then
-    a_out2+=(\" o Group owned by: \\\"\$l_group\\\" and should be group owned by \\\"\${l_agroup//|/ or }\\\"\" \" x Changing group ownership to: \\\"\$l_fix_account\\\"\")
-    chgrp \"\$l_fix_account\" \"\$l_fname\"
+    if [[ \"\$l_group\" != \"adm\" && \"\$l_group\" != \"utmp\" && \"\$l_group\" != \"systemd-journal\" ]]; then
+      a_out2+=(\" o Group owned by: \\\"\$l_group\\\" should be \\\"\${l_agroup//|/ or }\\\"\" \" x Changing group ownership to: root\")
+      chgrp root \"\$l_fname\"
+    fi
   fi
 
   [ \"\${#a_out2[@]}\" -gt 0 ] && a_output2+=(\" - File: \\\"\$l_fname\\\" is:\" \"\${a_out2[@]}\")
 }
-
-l_fix_account=\"root\"
 
 for path in \"\${log_paths[@]}\"; do
   while IFS= read -r -d \$'\0' l_file; do
@@ -4020,22 +4104,11 @@ for path in \"\${log_paths[@]}\"; do
         secure | auth.log | syslog | messages)
           perm_mask=0137 l_rperms=\"u-x,g-wx,o-rwx\" l_auser=\"(root|syslog)\" l_agroup=\"(root|adm)\"
           f_file_test_fix ;;
-        SSSD | sssd)
-          perm_mask=0117 l_rperms=\"ug-x,o-rwx\" l_auser=\"(root|SSSD)\" l_agroup=\"(root|SSSD)\"
-          f_file_test_fix ;;
-        gdm | gdm3)
-          perm_mask=0117 l_rperms=\"ug-x,o-rwx\" l_auser=\"root\" l_agroup=\"(root|gdm|gdm3)\"
-          f_file_test_fix ;;
         *.journal | *.journal~)
           perm_mask=0137 l_rperms=\"u-x,g-wx,o-rwx\" l_auser=\"root\" l_agroup=\"(root|systemd-journal)\"
           f_file_test_fix ;;
         *)
           perm_mask=0137 l_rperms=\"u-x,g-wx,o-rwx\" l_auser=\"(root|syslog)\" l_agroup=\"(root|adm)\"
-          user_shell=\"\$(getent passwd \"\$l_user\" | cut -d: -f7)\"
-          if [ \"\$l_user\" = \"root\" ] || ! grep -Pq -- \"^\\s*\${user_shell}\\b\" /etc/shells; then
-            ! grep -Pq -- \"\$l_auser\" <<< \"\$l_user\" && l_auser=\"(root|syslog|\$l_user)\"
-            ! grep -Pq -- \"\$l_agroup\" <<< \"\$l_group\" && l_agroup=\"(root|adm|\$l_group)\"
-          fi
           f_file_test_fix ;;
       esac
     done < <(stat -Lc \"%n:%#a:%U:%G\" \"\$l_file\")
@@ -4050,6 +4123,7 @@ fi
   '" "6.1.4.1 Audit and fix log file permissions"
 
 fi
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.1" || "$TARGET_SECTION" == "6.2" ]]; then
@@ -4151,27 +4225,27 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "6.2.2" || "$TARGET_SECTION" 
   # =====================[ SECTION 6.2.2.1: Ensure audit log storage size is configured ]=====================
   start_section "6.2.2.1"
 
-  # Set max_log_file to 8 MB or higher in /etc/audit/auditd.conf
+  # Set max_log_file to 10 MB or higher in /etc/audit/auditd.conf
   run_command '
 if grep -q "^max_log_file" /etc/audit/auditd.conf; then
-  sed -i "s/^max_log_file.*/max_log_file = 8/" /etc/audit/auditd.conf
+  sed -i "s/^max_log_file.*/max_log_file = 10/" /etc/audit/auditd.conf
 else
-  echo "max_log_file = 8" >> /etc/audit/auditd.conf
+  echo "max_log_file = 10" >> /etc/audit/auditd.conf
 fi
-' "6.2.2.1 Set max_log_file = 8 in auditd.conf"
+' "6.2.2.1 Set max_log_file = 10 in auditd.conf"
 
 
   # =====================[ SECTION 6.2.2.2: Ensure audit logs are not automatically deleted ]=====================
   start_section "6.2.2.2"
 
-  # Set max_log_file_action to keep_logs in /etc/audit/auditd.conf
+  # Set max_log_file_action to rotate in /etc/audit/auditd.conf
   run_command '
 if grep -q "^max_log_file_action" /etc/audit/auditd.conf; then
-  sed -i "s/^max_log_file_action.*/max_log_file_action = keep_logs/" /etc/audit/auditd.conf
+  sed -i "s/^max_log_file_action.*/max_log_file_action = rotate/" /etc/audit/auditd.conf
 else
-  echo "max_log_file_action = keep_logs" >> /etc/audit/auditd.conf
+  echo "max_log_file_action = rotate" >> /etc/audit/auditd.conf
 fi
-' "6.2.2.2 Set max_log_file_action = keep_logs in auditd.conf"
+' "6.2.2.2 Set max_log_file_action = rotate in auditd.conf"
 
 
   # =====================[ SECTION 6.2.2.3: Ensure system is disabled when audit logs are full ]=====================
@@ -4180,17 +4254,17 @@ fi
   # Set disk_full_action and disk_error_action in /etc/audit/auditd.conf
   run_command '
 if grep -q "^disk_full_action" /etc/audit/auditd.conf; then
-  sed -i "s/^disk_full_action.*/disk_full_action = halt/" /etc/audit/auditd.conf
+  sed -i "s/^disk_full_action.*/disk_full_action = suspend/" /etc/audit/auditd.conf
 else
-  echo "disk_full_action = halt" >> /etc/audit/auditd.conf
+  echo "disk_full_action = suspend" >> /etc/audit/auditd.conf
 fi
 
 if grep -q "^disk_error_action" /etc/audit/auditd.conf; then
-  sed -i "s/^disk_error_action.*/disk_error_action = halt/" /etc/audit/auditd.conf
+  sed -i "s/^disk_error_action.*/disk_error_action = suspend/" /etc/audit/auditd.conf
 else
-  echo "disk_error_action = halt" >> /etc/audit/auditd.conf
+  echo "disk_error_action = suspend" >> /etc/audit/auditd.conf
 fi
-' "6.2.2.3 Set disk_full_action and disk_error_action to halt in auditd.conf"
+' "6.2.2.3 Set disk_full_action and disk_error_action to suspend in auditd.conf"
 
 
   # =====================[ SECTION 6.2.2.4: Ensure system warns when audit logs are low on space ]=====================
@@ -4199,17 +4273,17 @@ fi
   # Set space_left_action and admin_space_left_action in /etc/audit/auditd.conf
   run_command '
 if grep -q "^space_left_action" /etc/audit/auditd.conf; then
-  sed -i "s/^space_left_action.*/space_left_action = email/" /etc/audit/auditd.conf
+  sed -i "s/^space_left_action.*/space_left_action = syslog/" /etc/audit/auditd.conf
 else
-  echo "space_left_action = email" >> /etc/audit/auditd.conf
+  echo "space_left_action = syslog" >> /etc/audit/auditd.conf
 fi
 
 if grep -q "^admin_space_left_action" /etc/audit/auditd.conf; then
-  sed -i "s/^admin_space_left_action.*/admin_space_left_action = single/" /etc/audit/auditd.conf
+  sed -i "s/^admin_space_left_action.*/admin_space_left_action = syslog/" /etc/audit/auditd.conf
 else
-  echo "admin_space_left_action = single" >> /etc/audit/auditd.conf
+  echo "admin_space_left_action = syslog" >> /etc/audit/auditd.conf
 fi
-' "6.2.2.4 Set space_left_action=email and admin_space_left_action=single in auditd.conf"
+' "6.2.2.4 Set space_left_action=syslog and admin_space_left_action=syslog in auditd.conf"
 
 fi
 ########################################################################################
@@ -4985,7 +5059,7 @@ fi
     # Attempt to install AIDE if not already installed
     if ! dpkg -s aide >/dev/null 2>&1; then
       if is_online; then
-        run_command "apt install -y aide aide-common" "6.3.1 Install AIDE and aide-common packages"
+        run_command "apt install -y libmhash2 aide aide-common" "6.3.1 Install AIDE and aide-common packages"
       else
         log_message "6.3.1 System appears to be offline — attempting offline AIDE install"
 
@@ -5228,16 +5302,22 @@ find / -xdev \( -nouser -o -nogroup \) -exec chown root:root {} +
 ' "7.1.12 Assign root ownership to unowned files and directories"
 
 
+
   # =====================[ SECTION 7.1.13: Review SUID and SGID files manually ]=====================
   start_section "7.1.13"
 
-  run_command '
-find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | tee "$LOG_DIR/section_logs/7.1.13/suid_sgid_files.log"
-' "7.1.13 Discover SUID and SGID files for manual review"
+  # Ensure log directory exists
+  mkdir -p "$LOG_DIR/section_logs/7.1.13"
+
+  # Run the find command and log results
+  run_command "find / -xdev \\( -perm -4000 -o -perm -2000 \\) -type f 2>/dev/null | tee \"$LOG_DIR/section_logs/7.1.13/suid_sgid_files.log\"" \
+  "7.1.13 Discover SUID and SGID files for manual review"
 
   log_message "Manual review required: Check $LOG_DIR/section_logs/7.1.13/suid_sgid_files.log for potential rogue binaries."
 
 fi
+
+
 
 ########################################################################################
 if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "7.2" ]]; then
@@ -5506,19 +5586,40 @@ EOF
     echo 'Defaults        secure_path="/usr/sbin/script:/sbin:/bin:/usr/sbin:/usr/bin"' >> /etc/sudoers
     run_command "echo 'Defaults secure_path updated'" "8.1.7 Update secure_path in sudoers"
   fi
+  
+  ### add path to bashrc ###
+  if ! grep -q 'export PATH="/usr/sbin/script:/usr/sbin:/usr/local/sbin:$PATH"' /etc/bash.bashrc; then
+    cat << 'EOF' >> /etc/bash.bashrc
 
+if [ "$EUID" = "0" ]; then
+    export PATH="/usr/sbin/script:/usr/sbin:/usr/local/sbin:$PATH"
+fi
+EOF
+    run_command "source /etc/bash.bashrc" "8.1.8 Reload bash.bashrc to apply PATH changes"
+  fi
   # Step 8: Update /etc/profile for root PATH
-  if ! grep -q 'pathmunge /usr/sbin/script' /etc/profile; then
+  if ! grep -q 'export PATH="/usr/sbin/script:/usr/sbin:/usr/local/sbin:$PATH"' /etc/profile; then
     cat << 'EOF' >> /etc/profile
 
 if [ "$EUID" = "0" ]; then
-    pathmunge /usr/sbin/script
-    pathmunge /usr/sbin
-    pathmunge /usr/local/sbin
+    export PATH="/usr/sbin/script:/usr/sbin:/usr/local/sbin:$PATH"
 fi
 EOF
     run_command "source /etc/profile" "8.1.8 Reload profile to apply PATH changes"
   fi
+# Step 10: Update /etc/environment PATH
+  if grep -q '^PATH=' /etc/environment; then
+      # Replace existing PATH line
+      sed -i 's|^PATH=.*|PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/usr/sbin/script"|' /etc/environment
+      run_command "echo '/etc/environment PATH updated'" "8.1.10 Replace PATH in /etc/environment"
+  else
+      # Add PATH line if not present
+      echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/usr/sbin/script"' >> /etc/environment
+      run_command "echo '/etc/environment PATH added'" "8.1.10 Add PATH to /etc/environment"
+  fi
+
+# Step 11: Reload environment to apply changes
+run_command "source /etc/environment" "8.1.11 Reload /etc/environment to apply PATH changes"
 
 fi
 
@@ -5722,6 +5823,28 @@ if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.7" || "$TARGET_SECTION" ==
   fi
 fi
 
+# =====================[ SECTION 8.8: Ensure /etc/skel/.bash_history Exists and Secured ]=====================
+if [[ -z "$TARGET_SECTION" || "$TARGET_SECTION" == "8.8" || "$TARGET_SECTION" == "8" ]]; then
+  start_section "8.8"
+
+  FILE="/etc/skel/.bash_history"
+
+  if [[ -f "$FILE" ]]; then
+    log_message "8.8 $FILE already exists"
+  else
+    run_command "touch \"$FILE\"" \
+    "8.8 Create $FILE"
+  fi
+
+  run_command "chmod 644 \"$FILE\"" \
+  "8.8 Set permissions 644 on $FILE"
+
+  run_command "chown root:root \"$FILE\"" \
+  "8.8 Set ownership root:root on $FILE"
+
+  run_command "chattr +a \"$FILE\"" \
+  "8.8 Set append-only attribute on $FILE"
+fi
 
 
 # =====================[ END OF CIS Ubuntu 24.04 HARDENING SCRIPT ]=====================
@@ -5767,5 +5890,4 @@ echo "    └── Details log: $LOG_DIR1/details.log"
 
 echo ""
 echo -e "\e[36m🛡️ Stay secure. Stay compliant.\e[0m"
-
 
