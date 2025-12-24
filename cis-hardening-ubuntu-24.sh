@@ -445,7 +445,7 @@ EOF
 
   run_command "chmod 700 $CUSTOM_GRUB_FILE" "1.4.1 Set executable permissions on GRUB password script"
   run_command "update-grub" "1.4.1 Apply GRUB configuration changes"
-  run_command "sed -i 's/^CLASS=\"--class gnu-linux --class gnu --class os \"/CLASS=\"--class gnu-linux --class gnu --class os --unrestricted\"/' /etc/grub.d/10_linux" \ "1.4.3 Add --unrestricted to GRUB CLASS line"
+  run_command "sed -i 's/^CLASS=\"--class gnu-linux --class gnu --class os\"/CLASS=\"--class gnu-linux --class gnu --class os --unrestricted\"/' /etc/grub.d/10_linux" \ "1.4.3 Add --unrestricted to GRUB CLASS line"
 
   # =====================[ SECTION 1.4.2: Ensure access to bootloader config is configured ]=====================
   start_section "1.4.2"
